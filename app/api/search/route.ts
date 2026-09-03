@@ -201,16 +201,26 @@ export async function GET(request: Request) {
       const statusMessage = task.status_message ?? null;
 
       // DataForSEO error
-      if (statusCode >= 40000) {
-        return NextResponse.json({
-          pending: false,
-          taskId,
-          results: [],
-          statusCode,
-          statusMessage,
-          error: statusMessage || 'DataForSEO task failed.',
-        });
-      }
+ if (statusCode === 40601 || statusCode === 40602) {
+  return NextResponse.json({
+    pending: true,
+    taskId,
+    results: [],
+    statusCode,
+    statusMessage,
+  });
+}
+
+if (statusCode >= 40000) {
+  return NextResponse.json({
+    pending: false,
+    taskId,
+    results: [],
+    statusCode,
+    statusMessage,
+    error: statusMessage || 'DataForSEO task failed.',
+  });
+}
 
       // Results ready
       if (Array.isArray(task.result) && task.result.length > 0) {
