@@ -122,7 +122,11 @@ export default function Home() {
           ] as ProductResult[]).map((p) => (
             <article key={p.id} className="card">
               <div className="cardtop"><span className="tag">{p.category}</span><span className="score">{p.dealScore}/100</span></div>
-              <div className="thumb">{p.image ? <img src={p.image} alt="" /> : (p.category === 'Phones' ? '📱' : p.category === 'Monitors' ? '🖥️' : '📺')}</div>
+              <div className="thumb">
+  {'image' in p && p.image
+    ? <img src={p.image} alt="" />
+    : (p.category === 'Phones' ? '📱' : p.category === 'Monitors' ? '🖥️' : '📺')}
+</div>
               <h3>{p.title}</h3>
               <div className="price">€{p.bestPrice.toFixed(0)}</div>
               <div className="muted">Best current offer · deal score {p.dealScore}</div>
