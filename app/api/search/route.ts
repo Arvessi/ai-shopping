@@ -1,23 +1,30 @@
 import { NextResponse } from 'next/server';
 
 const API_URL =
-  'https://api.dataforseo.com/v3/merchant/google/products';
+  'https://api.dataforseo.com/v3/merchant/google/products/live/advanced';
 
-function authHeader() {
+function getAuthHeader() {
   const login = process.env.DATAFORSEO_LOGIN;
   const password = process.env.DATAFORSEO_PASSWORD;
 
-  if (!login || !password) return null;
+  if (!login || !password) {
+    return null;
+  }
 
   return `Basic ${Buffer.from(
     `${login}:${password}`
   ).toString('base64')}`;
 }
 
-type DfsOffer = {
+type DfsItem = {
+  product_id?: string;
   title?: string;
+  seller?: string;
   domain?: string;
-  url?: string | null;
+  url?: string;
+  shopping_url?: string;
+  shop_ad_aclk?: string;
+
   price?: number;
   old_price?: number;
   currency?: string;
@@ -25,49 +32,16 @@ type DfsOffer = {
   image_url?: string;
   product_images?: string[];
 
-  seller?: string;
-  product_id?: string;
-
-  shopping_url?: string;
-  shop_ad_aclk?: string;
-
   rating?: {
-    value?: number | string;
+    value?: number;
     votes_count?: number;
     rating_max?: number;
   };
 
-  delivery_info?: {
-    delivery_price?: {
-      current?: number | null;
-    } | null;
-  };
+  delivery_price?: number;
 };
 
-type ProductResult = {
-  id: string;
-  title: string;
-  brand: string;
-  category: string;
-  bestPrice: number;
-  currency: string;
-  dealScore: number;
-  image?: string;
-  offers: {
-    merchant: string;
-    price: number;
-    shipping: number;
-    currency: string;
-    dealScore: number;
-    productTitle: string;
-    image?: string;
-    url: string;
-    affiliate: boolean;
-    updatedAt: string;
-  }[];
-};
-
-function getImage(item: DfsOffer) {
+function getImage(item: DfsItem): string | undefined {
   return (
     item.product_images?.[0] ||
     item.image_url ||
@@ -75,99 +49,16 @@ function getImage(item: DfsOffer) {
   );
 }
 
-function getUrl(item: DfsOffer) {
-  if (item.url && item.url !== '#') {
-    return item.url;
-  }
-
-  if (item.shop_ad_aclk && item.shop_ad_aclk !== '#') {
-    return item.shop_ad_aclk;
-  }
-
-  if (item.shopping_url && item.shopping_url !== '#') {
-    return item.shopping_url;
-  }
-
-  return '#';
-}
-
-async function postTask(keyword: string, auth: string) {
-  const response = await fetch(`${API_URL}/task_post`, {
-    method: 'POST',
-    headers: {
-      Authorization: auth,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify([
-      {
-        language_code: 'lv',
-
-        // Riga coordinates.
-        // DataForSEO requires a radius >= 199.9 km.
-        location_coordinate: '56.9496,24.1052,200',
-
-        keyword,
-
-        depth: 20,
-
-        priority: 1,
-      },
-    ]),
-    cache: 'no-store',
-  });
-
-  const json = await response.json();
-
-  if (!response.ok || json?.status_code !== 20000) {
-    throw new Error(
-      json?.status_message ||
-        `DataForSEO task_post failed (${response.status})`
-    );
-  }
-
-  const task = json?.tasks?.[0];
-
-  if (!task?.id) {
-    throw new Error(
-      'DataForSEO did not return a task id.'
-    );
-  }
-
-  return {
-    taskId: String(task.id),
-    statusCode: task.status_code,
-    statusMessage: task.status_message,
-  };
-}
-
-async function getTask(taskId: string, auth: string) {
-  const response = await fetch(
-    `${API_URL}/task_get/advanced/${encodeURIComponent(taskId)}`,
-    {
-      headers: {
-        Authorization: auth,
-      },
-      cache: 'no-store',
-    }
+function getProductUrl(item: DfsItem): string {
+  return (
+    item.url ||
+    item.shopping_url ||
+    item.shop_ad_aclk ||
+    '#'
   );
-
-  const json = await response.json();
-
-  /*
-   * DataForSEO can return task status in the JSON body even
-   * when the HTTP response itself is successful.
-   */
-  if (!response.ok) {
-    throw new Error(
-      json?.status_message ||
-        `DataForSEO task_get failed (${response.status})`
-    );
-  }
-
-  return json;
 }
 
-function calculateScores(items: DfsOffer[]) {
+function calculateDealScores(items: DfsItem[]) {
   const prices = items
     .map((item) => item.price)
     .filter(
@@ -181,29 +72,25 @@ function calculateScores(items: DfsOffer[]) {
     return items.map(() => 60);
   }
 
-  const minPrice = Math.min(...prices);
-  const maxPrice = Math.max(...prices);
+  const cheapest = Math.min(...prices);
+  const expensive = Math.max(...prices);
 
   return items.map((item, index) => {
-    const price = item.price ?? maxPrice;
+    const price = item.price ?? expensive;
 
-    /*
-     * Price competitiveness: up to 25 points.
-     */
+    // Price score: 0-35
     let priceScore = 0;
 
-    if (maxPrice > minPrice) {
+    if (expensive > cheapest) {
       priceScore =
-        ((maxPrice - price) /
-          (maxPrice - minPrice)) *
-        25;
+        ((expensive - price) /
+          (expensive - cheapest)) *
+        35;
     } else {
-      priceScore = 25;
+      priceScore = 35;
     }
 
-    /*
-     * Discount: up to 10 points.
-     */
+    // Discount score: 0-15
     let discountScore = 0;
 
     if (
@@ -216,46 +103,31 @@ function calculateScores(items: DfsOffer[]) {
         100;
 
       discountScore = Math.min(
-        10,
-        Math.max(0, discount / 3)
+        15,
+        discount * 0.5
       );
     }
 
-    /*
-     * Rating: up to 8 points.
-     */
+    // Rating score: 0-10
     let ratingScore = 0;
 
     if (
-      item.rating &&
-      item.rating.value !== undefined
+      typeof item.rating?.value === 'number'
     ) {
-      const rating = Number(
-        item.rating.value
-      );
-
       const maxRating =
         item.rating.rating_max || 5;
 
-      if (
-        Number.isFinite(rating) &&
-        maxRating > 0
-      ) {
-        ratingScore =
-          (rating / maxRating) * 8;
-      }
+      ratingScore =
+        (item.rating.value / maxRating) * 10;
     }
 
-    /*
-     * Search relevance/position:
-     * up to 7 points.
-     */
-    const positionScore = Math.max(
+    // Search position/relevance: 0-10
+    const relevanceScore = Math.max(
       0,
-      7 - index * 0.35
+      10 - index * 0.5
     );
 
-    const score = Math.round(
+    return Math.round(
       Math.min(
         99,
         Math.max(
@@ -264,21 +136,26 @@ function calculateScores(items: DfsOffer[]) {
             priceScore +
             discountScore +
             ratingScore +
-            positionScore
+            relevanceScore
         )
       )
     );
-
-    return score;
   });
 }
 
-function mapResults(json: any): ProductResult[] {
+function mapResults(json: any) {
   const task = json?.tasks?.[0];
 
   if (!task) {
     throw new Error(
-      'No task returned from DataForSEO.'
+      'DataForSEO returned no task.'
+    );
+  }
+
+  if (task.status_code >= 40000) {
+    throw new Error(
+      task.status_message ||
+        'DataForSEO search failed.'
     );
   }
 
@@ -290,9 +167,9 @@ function mapResults(json: any): ProductResult[] {
 
   const items = (
     result.items ?? []
-  ) as DfsOffer[];
+  ) as DfsItem[];
 
-  const filtered = items.filter(
+  const validItems = items.filter(
     (item) =>
       typeof item.price === 'number' &&
       item.price > 0 &&
@@ -300,14 +177,14 @@ function mapResults(json: any): ProductResult[] {
   );
 
   const scores =
-    calculateScores(filtered);
+    calculateDealScores(validItems);
 
-  return filtered.map((item, index) => {
+  return validItems.map((item, index) => {
     const title =
       item.title || 'Product';
 
     const price =
-      item.price ?? 0;
+      item.price || 0;
 
     const currency =
       item.currency || 'EUR';
@@ -316,7 +193,7 @@ function mapResults(json: any): ProductResult[] {
       getImage(item);
 
     const url =
-      getUrl(item);
+      getProductUrl(item);
 
     const merchant =
       item.seller ||
@@ -325,11 +202,6 @@ function mapResults(json: any): ProductResult[] {
 
     const score =
       scores[index];
-
-    const shipping =
-      item.delivery_info
-        ?.delivery_price
-        ?.current;
 
     return {
       id:
@@ -341,13 +213,16 @@ function mapResults(json: any): ProductResult[] {
       brand:
         title.split(' ')[0] || '',
 
-      category: 'Shopping',
+      category:
+        'Shopping',
 
-      bestPrice: price,
+      bestPrice:
+        price,
 
       currency,
 
-      dealScore: score,
+      dealScore:
+        score,
 
       image,
 
@@ -358,13 +233,14 @@ function mapResults(json: any): ProductResult[] {
           price,
 
           shipping:
-            typeof shipping === 'number'
-              ? shipping
+            typeof item.delivery_price === 'number'
+              ? item.delivery_price
               : 0,
 
           currency,
 
-          dealScore: score,
+          dealScore:
+            score,
 
           productTitle:
             title,
@@ -373,7 +249,8 @@ function mapResults(json: any): ProductResult[] {
 
           url,
 
-          affiliate: false,
+          affiliate:
+            false,
 
           updatedAt:
             new Date().toISOString(),
@@ -383,25 +260,31 @@ function mapResults(json: any): ProductResult[] {
   });
 }
 
-export async function GET(request: Request) {
+export async function GET(
+  request: Request
+) {
   const { searchParams } =
     new URL(request.url);
 
   const q =
     searchParams.get('q')?.trim();
 
-  const taskId =
-    searchParams
-      .get('taskId')
-      ?.trim();
+  if (!q) {
+    return NextResponse.json(
+      {
+        results: [],
+        error: 'Missing query.',
+      },
+      { status: 400 }
+    );
+  }
 
   const auth =
-    authHeader();
+    getAuthHeader();
 
   if (!auth) {
     return NextResponse.json(
       {
-        pending: false,
         results: [],
         error:
           'DataForSEO credentials are not configured in Vercel.',
@@ -411,158 +294,85 @@ export async function GET(request: Request) {
   }
 
   try {
-    /*
-     * =====================================================
-     * EXISTING TASK
-     * =====================================================
-     */
-    if (taskId) {
-      const json =
-        await getTask(
-          taskId,
-          auth
-        );
+    const response =
+      await fetch(API_URL, {
+        method: 'POST',
 
-      const task =
-        json?.tasks?.[0];
-
-      /*
-       * 40401 can happen while the task is
-       * not yet available to task_get.
-       * Do not kill the frontend immediately.
-       */
-      if (!task) {
-        return NextResponse.json({
-          pending: true,
-          taskId,
-          results: [],
-          statusCode: 40602,
-          statusMessage:
-            'Task In Queue.',
-        });
-      }
-
-      const statusCode =
-        task.status_code ?? 0;
-
-      const statusMessage =
-        task.status_message ?? '';
-
-      /*
-       * IMPORTANT:
-       *
-       * 40601 = Task Handed
-       * 40602 = Task In Queue
-       *
-       * Both mean KEEP POLLING.
-       */
-      if (
-        statusCode === 40601 ||
-        statusCode === 40602 ||
-        statusMessage ===
-          'Task In Queue.'
-      ) {
-        return NextResponse.json({
-          pending: true,
-          taskId,
-          results: [],
-          statusCode,
-          statusMessage,
-        });
-      }
-
-      /*
-       * READY
-       */
-      if (
-        statusCode === 20000 &&
-        Array.isArray(task.result)
-      ) {
-        const results =
-          mapResults(json);
-
-        return NextResponse.json({
-          pending: false,
-          taskId,
-          results,
-          source:
-            'dataforseo',
-          statusCode,
-          statusMessage,
-        });
-      }
-
-      /*
-       * REAL ERROR
-       */
-      if (statusCode >= 40000) {
-        return NextResponse.json({
-          pending: false,
-          taskId,
-          results: [],
-          statusCode,
-          statusMessage,
-          error:
-            statusMessage ||
-            'DataForSEO task failed.',
-        });
-      }
-
-      /*
-       * Unknown/in-progress status.
-       */
-      return NextResponse.json({
-        pending: true,
-        taskId,
-        results: [],
-        statusCode,
-        statusMessage,
-      });
-    }
-
-    /*
-     * =====================================================
-     * NEW SEARCH
-     * =====================================================
-     */
-    if (!q) {
-      return NextResponse.json(
-        {
-          pending: false,
-          results: [],
-          error:
-            'Missing query.',
+        headers: {
+          Authorization: auth,
+          'Content-Type':
+            'application/json',
         },
-        { status: 400 }
+
+        body: JSON.stringify([
+          {
+            keyword: q,
+
+            language_code:
+              'lv',
+
+            location_coordinate:
+              '56.9496,24.1052,200',
+
+            depth: 40,
+
+            device:
+              'desktop',
+
+            os:
+              'windows',
+          },
+        ]),
+
+        cache: 'no-store',
+      });
+
+    const json =
+      await response.json();
+
+    if (!response.ok) {
+      throw new Error(
+        json?.status_message ||
+          `DataForSEO request failed (${response.status})`
       );
     }
 
-    const created =
-      await postTask(
-        q,
-        auth
+    if (
+      json?.status_code !==
+      20000
+    ) {
+      throw new Error(
+        json?.status_message ||
+          'DataForSEO request failed.'
       );
+    }
+
+    const results =
+      mapResults(json);
 
     return NextResponse.json({
-      pending: true,
-      taskId:
-        created.taskId,
-      results: [],
-      statusCode:
-        created.statusCode,
-      statusMessage:
-        created.statusMessage,
+      pending: false,
+
+      results,
+
+      source:
+        'dataforseo-live',
+
+      count:
+        results.length,
     });
   } catch (error) {
     console.error(
-      'DataForSEO search error:',
+      'DataForSEO live search error:',
       error
     );
 
     return NextResponse.json(
       {
         pending: false,
+
         results: [],
+
         error:
           error instanceof Error
             ? error.message
