@@ -20,4 +20,5 @@ export type ProductResult = {
   currency: string;
   dealScore: number;
   offers: Offer[];
+  image?: string;
 };
