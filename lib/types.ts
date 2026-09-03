@@ -13,6 +13,7 @@ export type OfferView = {
   merchantDomain?: string;
   variantLabel?: string;
   variantData?: VariantAttributes;
+  image?: string;
   price: number;
   shipping: number;
   shippingKnown?: boolean;

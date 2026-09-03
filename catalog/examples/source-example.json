@@ -1,0 +1,40 @@
+{
+  "merchant": {
+    "name": "Example Shop",
+    "slug": "example-shop",
+    "domain": "example.lv"
+  },
+  "source": {
+    "name": "Example XML feed",
+    "slug": "example-shop-main",
+    "url": "https://example.lv/products.xml",
+    "format": "xml",
+    "mapping": {
+      "itemPath": "products.product",
+      "fields": {
+        "externalId": "id",
+        "title": "name",
+        "brand": "manufacturer",
+        "model": "model",
+        "category": "category",
+        "gtin": "ean",
+        "mpn": "mpn",
+        "sku": "sku",
+        "price": "price",
+        "oldPrice": "old_price",
+        "currency": "currency",
+        "url": "url",
+        "image": "image",
+        "availability": "availability",
+        "stockQty": "stock",
+        "shippingPrice": "delivery_price",
+        "deliveryDaysMin": "delivery_days_min",
+        "deliveryDaysMax": "delivery_days_max",
+        "color": "color",
+        "storage": "storage",
+        "ram": "ram",
+        "condition": "condition"
+      }
+    }
+  }
+}

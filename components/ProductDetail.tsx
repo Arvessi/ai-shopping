@@ -286,6 +286,28 @@ export default function ProductDetail({
         )
       : 0;
 
+  const selectedImage = useMemo(() => {
+    const catalogVariant = (product?.catalogVariants || []).find(
+      (variant: any) =>
+        Object.entries(selected).every(
+          ([key, value]) =>
+            !value ||
+            variant.attributes?.[key] === value,
+        ),
+    );
+
+    const offerImage = filteredOffers.find(
+      (offer: any) => Boolean(offer.image),
+    )?.image;
+
+    return (
+      catalogVariant?.image ||
+      offerImage ||
+      product?.image ||
+      ''
+    );
+  }, [product, selected, filteredOffers]);
+
   async function runRefresh(
     force = false,
     silent = false,
@@ -554,9 +576,9 @@ export default function ProductDetail({
 
       <section className="producthero">
         <div className="detailimage">
-          {product.image ? (
+          {selectedImage ? (
             <img
-              src={product.image}
+              src={selectedImage}
               alt={product.title}
             />
           ) : (

@@ -44,6 +44,8 @@ model Product {
   snapshots        PriceSnapshot[]
   wishlistedBy     Wishlist[]
   alerts           PriceAlert[]
+
+  @@index([source, normalizedTitle])
 }
 
 model Offer {
@@ -54,6 +56,7 @@ model Offer {
   merchantDomain  String?
   variantLabel    String?
   variantData     Json?
+  image            String?
   price           Float
   shipping        Float    @default(0)
   shippingKnown   Boolean  @default(false)
@@ -71,8 +74,8 @@ model Offer {
   updatedAt       DateTime @updatedAt
   clicks          AffiliateClick[]
 
-  @@unique([productId, merchant, totalPrice])
   @@index([productId, totalPrice])
+  @@index([productId, merchant])
 }
 
 model PriceSnapshot {
@@ -158,4 +161,143 @@ model SearchCache {
   updatedAt DateTime @updatedAt
 
   @@index([expiresAt])
+}
+
+model Merchant {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String
+  domain      String?
+  active      Boolean  @default(true)
+  trustScore  Float?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  feeds       FeedSource[]
+  offers      CatalogOffer[]
+
+  @@index([active])
+}
+
+model FeedSource {
+  id             String   @id @default(cuid())
+  merchantId     String
+  merchant       Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  slug           String   @unique
+  name           String
+  url            String
+  format         String
+  mapping        Json
+  authHeaderEnv  String?
+  active         Boolean  @default(true)
+  lastImportedAt DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  offers         CatalogOffer[]
+  runs           ImportRun[]
+
+  @@index([merchantId, active])
+}
+
+model CatalogFamily {
+  id              String   @id @default(cuid())
+  canonicalKey    String   @unique
+  title           String
+  normalizedTitle String
+  brand           String?
+  model           String?
+  category        String?
+  image           String?
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  variants        CatalogVariant[]
+
+  @@index([normalizedTitle])
+  @@index([brand, model])
+}
+
+model CatalogVariant {
+  id           String        @id @default(cuid())
+  familyId     String
+  family       CatalogFamily @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  variantKey   String
+  gtin         String?
+  mpn          String?
+  color        String?
+  storage      String?
+  ram          String?
+  connectivity String?
+  size         String?
+  condition    String         @default("New")
+  attributes   Json?
+  image        String?
+  active       Boolean        @default(true)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  offers       CatalogOffer[]
+
+  @@unique([familyId, variantKey])
+  @@index([gtin])
+  @@index([mpn])
+}
+
+model CatalogOffer {
+  id              String         @id @default(cuid())
+  offerKey        String         @unique
+  sourceId        String
+  source          FeedSource     @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  merchantId      String
+  merchant        Merchant       @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  variantId       String
+  variant         CatalogVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  externalId      String?
+  title           String
+  url             String
+  image           String?
+  price           Float
+  oldPrice        Float?
+  currency        String         @default("EUR")
+  shippingPrice   Float?
+  deliveryDaysMin Int?
+  deliveryDaysMax Int?
+  availability    String?
+  stockQty        Int?
+  condition       String         @default("New")
+  active          Boolean        @default(true)
+  lastSeenAt      DateTime       @default(now())
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  snapshots       CatalogPriceSnapshot[]
+
+  @@index([variantId, active, price])
+  @@index([merchantId, active])
+  @@index([sourceId, active])
+}
+
+model CatalogPriceSnapshot {
+  id            String       @id @default(cuid())
+  offerId       String
+  offer         CatalogOffer @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  price         Float
+  shippingPrice Float?
+  availability  String?
+  stockQty      Int?
+  recordedAt    DateTime     @default(now())
+
+  @@index([offerId, recordedAt])
+}
+
+model ImportRun {
+  id            String     @id @default(cuid())
+  sourceId      String
+  source        FeedSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  status        String     @default("running")
+  itemCount     Int        @default(0)
+  acceptedCount Int        @default(0)
+  rejectedCount Int        @default(0)
+  error         String?
+  startedAt     DateTime   @default(now())
+  finishedAt    DateTime?
+
+  @@index([sourceId, startedAt])
 }

@@ -12,6 +12,7 @@ import {
   taskPending,
 } from '@/lib/dataforseo';
 import { replaceOffers } from '@/lib/products';
+import { projectFamilyToLegacy } from '@/lib/catalog';
 
 const ENRICH_TTL_MS =
   12 * 60 * 60 * 1000;
@@ -98,6 +99,20 @@ export async function POST(
       { error: 'Produkts nav atrasts.' },
       { status: 404 },
     );
+  }
+
+  if (
+    product.source === 'catalog' &&
+    product.externalId.startsWith('catalog:')
+  ) {
+    const familyId = product.externalId.slice('catalog:'.length);
+    await projectFamilyToLegacy(familyId);
+
+    return NextResponse.json({
+      pending: false,
+      cached: true,
+      source: 'ceniq-catalog',
+    });
   }
 
   if (
