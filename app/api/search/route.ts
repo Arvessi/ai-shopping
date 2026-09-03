@@ -14,22 +14,17 @@ type DfsOffer = {
   domain?: string;
   url?: string;
   price?: number;
+  old_price?: number;
   currency?: string;
   image_url?: string;
   seller?: string;
-  source?: string;
   product_id?: string;
-  rank_group?: number;
-  rating?: { value?: number; votes_count?: number };
 };
 
 async function postTask(keyword: string, auth: string) {
   const response = await fetch(`${API_URL}/task_post`, {
     method: 'POST',
-    headers: {
-      Authorization: auth,
-      'Content-Type': 'application/json',
-    },
+    headers: { Authorization: auth, 'Content-Type': 'application/json' },
     body: JSON.stringify([
       {
         language_code: 'en',
@@ -53,12 +48,12 @@ async function postTask(keyword: string, auth: string) {
 }
 
 async function getTask(taskId: string, auth: string) {
-  const response = await fetch(`${API_URL}/task_get/advanced/${taskId}`, {
+  const response = await fetch(`${API_URL}/task_get/advanced/${encodeURIComponent(taskId)}`, {
     headers: { Authorization: auth },
     cache: 'no-store',
   });
   const json = await response.json();
-  if (!response.ok || json?.status_code !== 20000) {
+  if (!response.ok) {
     throw new Error(json?.status_message || `DataForSEO task_get failed (${response.status})`);
   }
   return json;
@@ -72,43 +67,45 @@ function mapResults(json: any) {
   const result = task.result?.[0];
   const items = (result?.items ?? []) as DfsOffer[];
 
-  const normalized = items
+  return items
     .filter((item) => typeof item.price === 'number' && item.price > 0 && item.title)
-    .map((item, index) => ({
-      id: item.product_id || `${index}-${item.title}`,
-      title: item.title || 'Product',
-      brand: item.title?.split(' ')[0] || '',
-      category: 'Shopping',
-      bestPrice: item.price!,
-      currency: item.currency || 'EUR',
-      dealScore: Math.max(50, 96 - index * 2),
-      image: item.image_url,
-      offers: [
-        {
-          merchant: item.domain || item.seller || 'Merchant',
-          price: item.price!,
-          shipping: 0,
-          currency: item.currency || 'EUR',
-          dealScore: Math.max(50, 96 - index * 2),
-          productTitle: item.title || 'Product',
-          image: item.image_url,
-          url: item.url || '#',
-          affiliate: false,
-          updatedAt: new Date().toISOString(),
-        },
-      ],
-    }));
-
-  return normalized;
+    .map((item, index) => {
+      const currentPrice = item.price!;
+      const oldPrice = typeof item.old_price === 'number' && item.old_price > currentPrice ? item.old_price : undefined;
+      const discount = oldPrice ? Math.round((1 - currentPrice / oldPrice) * 100) : 0;
+      const score = Math.min(99, Math.max(55, 70 + Math.min(discount, 20) - index));
+      const title = item.title || 'Product';
+      return {
+        id: item.product_id || `${index}-${title}`,
+        title,
+        brand: title.split(' ')[0] || '',
+        category: 'Shopping',
+        bestPrice: currentPrice,
+        currency: item.currency || 'EUR',
+        dealScore: score,
+        image: item.image_url,
+        offers: [
+          {
+            merchant: item.domain || item.seller || 'Merchant',
+            price: currentPrice,
+            shipping: 0,
+            currency: item.currency || 'EUR',
+            dealScore: score,
+            productTitle: title,
+            image: item.image_url,
+            url: item.url || '#',
+            affiliate: false,
+            updatedAt: new Date().toISOString(),
+          },
+        ],
+      };
+    });
 }
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const q = searchParams.get('q')?.trim();
-
-  if (!q) {
-    return NextResponse.json({ results: [], error: 'Missing query.' }, { status: 400 });
-  }
+  const taskId = searchParams.get('taskId')?.trim();
 
   const auth = authHeader();
   if (!auth) {
@@ -119,26 +116,29 @@ export async function GET(request: Request) {
   }
 
   try {
-    const taskId = await postTask(q, auth);
-
-    // DataForSEO uses separate POST/GET retrieval. Poll briefly so the MVP can return
-    // in one browser request without a second frontend workflow.
-    for (let attempt = 0; attempt < 6; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 1200));
+    // Existing task: only check its current status. This keeps each request short
+    // enough for a normal Vercel serverless function.
+    if (taskId) {
       const json = await getTask(taskId, auth);
       const task = json?.tasks?.[0];
-      if (task?.status_code >= 40000) {
+      if (!task) {
+        return NextResponse.json({ pending: true, taskId, results: [] });
+      }
+      if (task.status_code >= 40000) {
         throw new Error(task.status_message || 'DataForSEO task failed.');
       }
-      if (Array.isArray(task?.result) && task.result.length > 0) {
-        return NextResponse.json({ results: mapResults(json), source: 'dataforseo' });
+      if (Array.isArray(task.result) && task.result.length > 0) {
+        return NextResponse.json({ pending: false, results: mapResults(json), source: 'dataforseo' });
       }
+      return NextResponse.json({ pending: true, taskId, results: [] });
     }
 
-    return NextResponse.json(
-      { results: [], error: 'The search is still processing. Please try again in a few seconds.' },
-      { status: 202 },
-    );
+    if (!q) {
+      return NextResponse.json({ results: [], error: 'Missing query.' }, { status: 400 });
+    }
+
+    const newTaskId = await postTask(q, auth);
+    return NextResponse.json({ pending: true, taskId: newTaskId, results: [] });
   } catch (error) {
     console.error('DataForSEO search error:', error);
     return NextResponse.json(
