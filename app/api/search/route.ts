@@ -21,27 +21,30 @@ type DfsOffer = {
   price?: number;
   old_price?: number;
   currency?: string;
-  product_images?: string[];
+
   image_url?: string;
+  product_images?: string[];
+
   seller?: string;
   product_id?: string;
+
   shopping_url?: string;
   shop_ad_aclk?: string;
+
+  rating?: {
+    value?: number | string;
+    votes_count?: number;
+    rating_max?: number;
+  };
 
   delivery_info?: {
     delivery_price?: {
       current?: number | null;
     } | null;
   };
-
-  rating?: {
-    value?: string | number;
-    votes_count?: number;
-    rating_max?: number;
-  };
 };
 
-type Product = {
+type ProductResult = {
   id: string;
   title: string;
   brand: string;
@@ -64,6 +67,30 @@ type Product = {
   }[];
 };
 
+function getImage(item: DfsOffer) {
+  return (
+    item.product_images?.[0] ||
+    item.image_url ||
+    undefined
+  );
+}
+
+function getUrl(item: DfsOffer) {
+  if (item.url && item.url !== '#') {
+    return item.url;
+  }
+
+  if (item.shop_ad_aclk && item.shop_ad_aclk !== '#') {
+    return item.shop_ad_aclk;
+  }
+
+  if (item.shopping_url && item.shopping_url !== '#') {
+    return item.shopping_url;
+  }
+
+  return '#';
+}
+
 async function postTask(keyword: string, auth: string) {
   const response = await fetch(`${API_URL}/task_post`, {
     method: 'POST',
@@ -74,9 +101,15 @@ async function postTask(keyword: string, auth: string) {
     body: JSON.stringify([
       {
         language_code: 'lv',
-        location_name: 'Riga,Latvia',
+
+        // Riga coordinates.
+        // DataForSEO requires a radius >= 199.9 km.
+        location_coordinate: '56.9496,24.1052,200',
+
         keyword,
+
         depth: 20,
+
         priority: 1,
       },
     ]),
@@ -93,16 +126,17 @@ async function postTask(keyword: string, auth: string) {
   }
 
   const task = json?.tasks?.[0];
-  const taskId = task?.id;
 
-  if (!taskId) {
-    throw new Error('DataForSEO did not return a task id.');
+  if (!task?.id) {
+    throw new Error(
+      'DataForSEO did not return a task id.'
+    );
   }
 
   return {
-    taskId: String(taskId),
-    statusCode: task?.status_code,
-    statusMessage: task?.status_message,
+    taskId: String(task.id),
+    statusCode: task.status_code,
+    statusMessage: task.status_message,
   };
 }
 
@@ -119,6 +153,10 @@ async function getTask(taskId: string, auth: string) {
 
   const json = await response.json();
 
+  /*
+   * DataForSEO can return task status in the JSON body even
+   * when the HTTP response itself is successful.
+   */
   if (!response.ok) {
     throw new Error(
       json?.status_message ||
@@ -129,51 +167,8 @@ async function getTask(taskId: string, auth: string) {
   return json;
 }
 
-function toNumber(value: unknown): number | undefined {
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return value;
-  }
-
-  if (typeof value === 'string') {
-    const normalized = Number(value.replace(',', '.'));
-
-    if (Number.isFinite(normalized)) {
-      return normalized;
-    }
-  }
-
-  return undefined;
-}
-
-function getImage(item: DfsOffer) {
-  return (
-    item.product_images?.[0] ||
-    item.image_url ||
-    undefined
-  );
-}
-
-function getMerchantUrl(item: DfsOffer) {
-  /*
-   * DataForSEO's current Google Shopping response marks
-   * the old `url` field as deprecated. Keep it as a fallback.
-   */
-  if (item.url && item.url !== '#') {
-    return item.url;
-  }
-
-  if (
-    item.shopping_url &&
-    item.shopping_url !== '#'
-  ) {
-    return item.shopping_url;
-  }
-
-  return '#';
-}
-
 function calculateScores(items: DfsOffer[]) {
-  const validPrices = items
+  const prices = items
     .map((item) => item.price)
     .filter(
       (price): price is number =>
@@ -182,25 +177,33 @@ function calculateScores(items: DfsOffer[]) {
         price > 0
     );
 
-  if (!validPrices.length) {
+  if (!prices.length) {
     return items.map(() => 60);
   }
 
-  const minPrice = Math.min(...validPrices);
-  const maxPrice = Math.max(...validPrices);
+  const minPrice = Math.min(...prices);
+  const maxPrice = Math.max(...prices);
 
   return items.map((item, index) => {
     const price = item.price ?? maxPrice;
 
-    // 0-20 points for being cheap compared with the other results.
+    /*
+     * Price competitiveness: up to 25 points.
+     */
     let priceScore = 0;
 
     if (maxPrice > minPrice) {
       priceScore =
-        ((maxPrice - price) / (maxPrice - minPrice)) * 20;
+        ((maxPrice - price) /
+          (maxPrice - minPrice)) *
+        25;
+    } else {
+      priceScore = 25;
     }
 
-    // 0-10 points for a genuine old_price discount.
+    /*
+     * Discount: up to 10 points.
+     */
     let discountScore = 0;
 
     if (
@@ -208,7 +211,9 @@ function calculateScores(items: DfsOffer[]) {
       item.old_price > price
     ) {
       const discount =
-        ((item.old_price - price) / item.old_price) * 100;
+        ((item.old_price - price) /
+          item.old_price) *
+        100;
 
       discountScore = Math.min(
         10,
@@ -216,34 +221,46 @@ function calculateScores(items: DfsOffer[]) {
       );
     }
 
-    // Small quality bonus for ratings/reviews.
+    /*
+     * Rating: up to 8 points.
+     */
     let ratingScore = 0;
 
-    const rating = toNumber(item.rating?.value);
+    if (
+      item.rating &&
+      item.rating.value !== undefined
+    ) {
+      const rating = Number(
+        item.rating.value
+      );
 
-    if (rating !== undefined) {
-      const ratingMax =
-        item.rating?.rating_max ?? 5;
+      const maxRating =
+        item.rating.rating_max || 5;
 
-      if (ratingMax > 0) {
+      if (
+        Number.isFinite(rating) &&
+        maxRating > 0
+      ) {
         ratingScore =
-          (rating / ratingMax) * 6;
+          (rating / maxRating) * 8;
       }
     }
 
-    // Ranking bonus: higher Google Shopping positions
-    // get a small relevance advantage, but not too much.
+    /*
+     * Search relevance/position:
+     * up to 7 points.
+     */
     const positionScore = Math.max(
       0,
-      5 - index * 0.25
+      7 - index * 0.35
     );
 
     const score = Math.round(
       Math.min(
         99,
         Math.max(
-          55,
-          60 +
+          50,
+          50 +
             priceScore +
             discountScore +
             ratingScore +
@@ -256,54 +273,63 @@ function calculateScores(items: DfsOffer[]) {
   });
 }
 
-function mapResults(json: any): Product[] {
+function mapResults(json: any): ProductResult[] {
   const task = json?.tasks?.[0];
 
   if (!task) {
-    throw new Error('No task returned from DataForSEO.');
-  }
-
-  if (
-    task.status_code >= 40000 &&
-    task.status_code !== 40601 &&
-    task.status_code !== 40602
-  ) {
     throw new Error(
-      task.status_message ||
-        'DataForSEO task failed.'
+      'No task returned from DataForSEO.'
     );
   }
 
   const result = task.result?.[0];
 
-  const items = (result?.items ?? []) as DfsOffer[];
+  if (!result) {
+    return [];
+  }
 
-  const filtered = items.filter((item) => {
-    return (
+  const items = (
+    result.items ?? []
+  ) as DfsOffer[];
+
+  const filtered = items.filter(
+    (item) =>
       typeof item.price === 'number' &&
       item.price > 0 &&
       Boolean(item.title)
-    );
-  });
+  );
 
-  const scores = calculateScores(filtered);
+  const scores =
+    calculateScores(filtered);
 
   return filtered.map((item, index) => {
-    const title = item.title || 'Product';
-    const price = item.price!;
-    const currency = item.currency || 'EUR';
-    const image = getImage(item);
-    const url = getMerchantUrl(item);
+    const title =
+      item.title || 'Product';
+
+    const price =
+      item.price ?? 0;
+
+    const currency =
+      item.currency || 'EUR';
+
+    const image =
+      getImage(item);
+
+    const url =
+      getUrl(item);
 
     const merchant =
       item.seller ||
       item.domain ||
       'Merchant';
 
-    const score = scores[index];
+    const score =
+      scores[index];
 
     const shipping =
-      item.delivery_info?.delivery_price?.current;
+      item.delivery_info
+        ?.delivery_price
+        ?.current;
 
     return {
       id:
@@ -340,7 +366,8 @@ function mapResults(json: any): Product[] {
 
           dealScore: score,
 
-          productTitle: title,
+          productTitle:
+            title,
 
           image,
 
@@ -357,13 +384,19 @@ function mapResults(json: any): Product[] {
 }
 
 export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
+  const { searchParams } =
+    new URL(request.url);
 
-  const q = searchParams.get('q')?.trim();
+  const q =
+    searchParams.get('q')?.trim();
+
   const taskId =
-    searchParams.get('taskId')?.trim();
+    searchParams
+      .get('taskId')
+      ?.trim();
 
-  const auth = authHeader();
+  const auth =
+    authHeader();
 
   if (!auth) {
     return NextResponse.json(
@@ -379,37 +412,55 @@ export async function GET(request: Request) {
 
   try {
     /*
+     * =====================================================
      * EXISTING TASK
+     * =====================================================
      */
     if (taskId) {
-      const json = await getTask(taskId, auth);
-      const task = json?.tasks?.[0];
+      const json =
+        await getTask(
+          taskId,
+          auth
+        );
 
-if (!task) {
-  return NextResponse.json({
-    pending: true,
-    taskId,
-    results: [],
-    statusCode: 40602,
-    statusMessage: 'Task In Queue.',
-  });
-}
+      const task =
+        json?.tasks?.[0];
+
+      /*
+       * 40401 can happen while the task is
+       * not yet available to task_get.
+       * Do not kill the frontend immediately.
+       */
+      if (!task) {
+        return NextResponse.json({
+          pending: true,
+          taskId,
+          results: [],
+          statusCode: 40602,
+          statusMessage:
+            'Task In Queue.',
+        });
+      }
 
       const statusCode =
-        task.status_code ?? null;
+        task.status_code ?? 0;
 
       const statusMessage =
-        task.status_message ?? null;
+        task.status_message ?? '';
 
       /*
        * IMPORTANT:
-       * 40601 and 40602 are normal waiting states,
-       * NOT fatal errors.
+       *
+       * 40601 = Task Handed
+       * 40602 = Task In Queue
+       *
+       * Both mean KEEP POLLING.
        */
       if (
         statusCode === 40601 ||
         statusCode === 40602 ||
-        statusMessage === 'Task In Queue.'
+        statusMessage ===
+          'Task In Queue.'
       ) {
         return NextResponse.json({
           pending: true,
@@ -425,16 +476,17 @@ if (!task) {
        */
       if (
         statusCode === 20000 &&
-        Array.isArray(task.result) &&
-        task.result.length > 0
+        Array.isArray(task.result)
       ) {
-        const results = mapResults(json);
+        const results =
+          mapResults(json);
 
         return NextResponse.json({
           pending: false,
           taskId,
           results,
-          source: 'dataforseo',
+          source:
+            'dataforseo',
           statusCode,
           statusMessage,
         });
@@ -457,8 +509,7 @@ if (!task) {
       }
 
       /*
-       * Any other non-ready state:
-       * keep polling.
+       * Unknown/in-progress status.
        */
       return NextResponse.json({
         pending: true,
@@ -470,27 +521,32 @@ if (!task) {
     }
 
     /*
+     * =====================================================
      * NEW SEARCH
+     * =====================================================
      */
     if (!q) {
       return NextResponse.json(
         {
           pending: false,
           results: [],
-          error: 'Missing query.',
+          error:
+            'Missing query.',
         },
         { status: 400 }
       );
     }
 
-    const created = await postTask(
-      q,
-      auth
-    );
+    const created =
+      await postTask(
+        q,
+        auth
+      );
 
     return NextResponse.json({
       pending: true,
-      taskId: created.taskId,
+      taskId:
+        created.taskId,
       results: [],
       statusCode:
         created.statusCode,
