@@ -1,0 +1,144 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String?
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  wishlists    Wishlist[]
+  alerts       PriceAlert[]
+  searches     SearchLog[]
+  pushSubs     PushSubscription[]
+}
+
+model Product {
+  id               String   @id @default(cuid())
+  externalId       String   @unique
+  gid              String?
+  dataDocId        String?
+  title            String
+  normalizedTitle  String
+  brand            String?
+  category         String?
+  description      String?
+  image            String?
+  currency         String   @default("EUR")
+  currentBestPrice Float?
+  dealScore        Int      @default(50)
+  source           String   @default("dataforseo")
+  lastSyncedAt     DateTime @default(now())
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  offers           Offer[]
+  snapshots        PriceSnapshot[]
+  wishlistedBy     Wishlist[]
+  alerts           PriceAlert[]
+}
+
+model Offer {
+  id              String   @id @default(cuid())
+  productId       String
+  product         Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  merchant        String
+  merchantDomain  String?
+  price           Float
+  shipping        Float    @default(0)
+  totalPrice      Float
+  currency        String   @default("EUR")
+  sellerRating    Float?
+  sellerVotes     Int?
+  deliveryMessage String?
+  rawUrl          String?
+  dealScore       Int      @default(50)
+  isCheapest      Boolean  @default(false)
+  isBestOverall   Boolean  @default(false)
+  lastSeenAt      DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  clicks          AffiliateClick[]
+
+  @@unique([productId, merchant, totalPrice])
+  @@index([productId, totalPrice])
+}
+
+model PriceSnapshot {
+  id        String   @id @default(cuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  price     Float
+  currency  String   @default("EUR")
+  recordedAt DateTime @default(now())
+
+  @@index([productId, recordedAt])
+}
+
+model Wishlist {
+  id        String   @id @default(cuid())
+  userId    String
+  productId String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, productId])
+}
+
+model PriceAlert {
+  id             String   @id @default(cuid())
+  userId         String
+  productId      String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product        Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  targetPrice    Float
+  emailEnabled   Boolean  @default(true)
+  browserEnabled Boolean  @default(true)
+  active         Boolean  @default(true)
+  lastTriggeredAt DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([active, productId])
+}
+
+model SearchLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  query     String
+  mode      String   @default("search")
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model AffiliateClick {
+  id        String   @id @default(cuid())
+  offerId   String
+  offer     Offer    @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  subId     String
+  userAgent String?
+  referer   String?
+  createdAt DateTime @default(now())
+
+  @@index([offerId, createdAt])
+}
