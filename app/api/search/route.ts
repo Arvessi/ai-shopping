@@ -61,6 +61,12 @@ async function getTask(taskId: string, auth: string) {
 
 function mapResults(json: any) {
   const task = json?.tasks?.[0];
+  console.log('DataForSEO task:', {
+  id: task.id,
+  status_code: task.status_code,
+  status_message: task.status_message,
+  result_count: task.result_count,
+});
   if (!task) throw new Error('No task returned from DataForSEO.');
   if (task.status_code >= 40000) throw new Error(task.status_message || 'DataForSEO task failed.');
 
