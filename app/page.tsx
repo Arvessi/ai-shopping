@@ -10,6 +10,7 @@ export default function Home() {
   const [mode, setMode] = useState<'search' | 'assistant'>('search');
   const [results, setResults] = useState<ProductResult[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
   const heading = useMemo(
     () => mode === 'search' ? 'Find exactly what you want.' : 'Tell AI what you need.',
@@ -19,11 +20,48 @@ export default function Home() {
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (!query.trim()) return;
+
     setLoading(true);
+    setError('');
+    setResults([]);
+
     try {
       const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
       const data = await res.json();
-      setResults(data.results ?? []);
+      if (!res.ok) throw new Error(data.error || 'Search failed.');
+
+      if (data.results?.length) {
+        setResults(data.results);
+        return;
+      }
+
+      const taskId = data.taskId;
+      if (!taskId) throw new Error('Search task was not created.');
+
+      // DataForSEO is asynchronous. Poll the task status from the browser instead of
+      // keeping one Vercel request open until the external search finishes.
+      for (let attempt = 0; attempt < 12; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        const poll = await fetch(`/api/search?taskId=${encodeURIComponent(taskId)}`);
+        const pollData = await poll.json();
+
+        if (!poll.ok) throw new Error(pollData.error || 'Search failed.');
+        if (pollData.error) throw new Error(pollData.error);
+
+        if (!pollData.pending) {
+          const nextResults = pollData.results ?? [];
+          if (!nextResults.length) {
+            setError('No matching shopping results were found.');
+          }
+          setResults(nextResults);
+          return;
+        }
+      }
+
+      throw new Error('The search is taking longer than expected. Try again in a few seconds.');
+    } catch (error) {
+      setResults([]);
+      setError(error instanceof Error ? error.message : 'Search failed.');
     } finally {
       setLoading(false);
     }
@@ -57,6 +95,8 @@ export default function Home() {
           <button type="submit">{loading ? 'Searching…' : 'Search'}</button>
         </form>
 
+        {error && <div className="error">{error}</div>}
+
         <div className="examples">
           <span>Try:</span>
           {['iPhone 17 256GB', 'OLED monitor 240Hz', '55 OLED TV under €1200'].map((x) => (
@@ -73,7 +113,7 @@ export default function Home() {
       </section>
 
       <section className="section">
-        <div className="sectionhead"><h2>{results.length ? 'Results' : 'Demo deals'}</h2><span>{results.length ? `${results.length} matches` : 'MVP sample data'}</span></div>
+        <div className="sectionhead"><h2>{results.length ? 'Results' : 'Demo deals'}</h2><span>{results.length ? `${results.length} matches · live data` : 'Demo sample data'}</span></div>
         <div className="grid">
           {(results.length ? results : [
             { id: 'demo1', title: 'Apple iPhone 17 256GB', brand: 'Apple', category: 'Phones', bestPrice: 899, currency: 'EUR', dealScore: 91, offers: [] },
@@ -82,7 +122,7 @@ export default function Home() {
           ] as ProductResult[]).map((p) => (
             <article key={p.id} className="card">
               <div className="cardtop"><span className="tag">{p.category}</span><span className="score">{p.dealScore}/100</span></div>
-              <div className="thumb">{p.category === 'Phones' ? '📱' : p.category === 'Monitors' ? '🖥️' : '📺'}</div>
+              <div className="thumb">{p.image ? <img src={p.image} alt="" /> : (p.category === 'Phones' ? '📱' : p.category === 'Monitors' ? '🖥️' : '📺')}</div>
               <h3>{p.title}</h3>
               <div className="price">€{p.bestPrice.toFixed(0)}</div>
               <div className="muted">Best current offer · deal score {p.dealScore}</div>
