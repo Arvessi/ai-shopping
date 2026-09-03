@@ -260,12 +260,37 @@ function isProductLike(item: RawItem) {
 
   const type = String(item.type || '').toLowerCase();
 
-  return (
+  // Best-quality structured Google product results.
+  if (
     type.includes('shopping') ||
     type.includes('popular_products') ||
     type.includes('commercial_units') ||
     type.includes('product')
-  );
+  ) {
+    return true;
+  }
+
+  // Latvia does not always get a dedicated Shopping/Popular Products block.
+  // Keep a tightly-scoped fallback for actual price-bearing merchant pages.
+  if (type === 'organic' || type === 'paid') {
+    const hasDestination = Boolean(
+      item.domain ||
+      item.url ||
+      item.shopping_url ||
+      item.marketplace_url
+    );
+
+    const hasMerchantSignal = Boolean(
+      item.seller ||
+      item.seller_name ||
+      item.marketplace ||
+      item.domain
+    );
+
+    return hasDestination && hasMerchantSignal;
+  }
+
+  return false;
 }
 
 function collectProductItems(value: unknown, output: RawItem[] = []): RawItem[] {
@@ -288,20 +313,38 @@ function collectProductItems(value: unknown, output: RawItem[] = []): RawItem[] 
   return output;
 }
 
+function merchantFromUrl(url?: string | null) {
+  if (!url) return undefined;
+
+  try {
+    const hostname = new URL(url).hostname.replace(/^www\./i, '');
+    if (!hostname) return undefined;
+
+    const first = hostname.split('.')[0] || hostname;
+    return first
+      .replace(/[-_]+/g, ' ')
+      .replace(/\b\w/g, (letter) => letter.toUpperCase());
+  } catch {
+    return undefined;
+  }
+}
+
 function merchantName(item: RawItem) {
   const candidates = [
     item.seller_name,
     item.seller,
     item.marketplace,
     item.domain,
+    merchantFromUrl(item.url || item.shopping_url || item.marketplace_url),
     item.source,
   ];
 
   for (const candidate of candidates) {
     const value = String(candidate || '').trim();
     if (!value) continue;
-    if (/^(no|from|cena|price)$/i.test(value)) continue;
-    return value;
+    if (/^(no|from|cena|price|buy|shop)$/i.test(value)) continue;
+    if (/google shopping/i.test(value)) continue;
+    return value.replace(/^www\./i, '');
   }
 
   return 'Veikals';
@@ -339,7 +382,9 @@ export function mapFastProductSearch(json: Json): ProductResult[] {
     throw new Error(task.status_message || 'DataForSEO Live search failed.');
   }
 
-  const rawItems = collectProductItems(task.result || []);
+  const rawItems = collectProductItems(task.result || []).filter(
+    (item) => !isExcludedComparisonSite(item),
+  );
   const groups = new Map<string, RawItem[]>();
 
   for (const item of rawItems) {
