@@ -1,55 +1,135 @@
 'use client';
 
-import { ChangeEvent, useEffect, useMemo, useState } from 'react';
+import {
+  ChangeEvent,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
 import PriceChart from './PriceChart';
 
 type Product = any;
 
 type AiVerdict = {
-  verdict: 'Pērc tagad' | 'Pagaidi' | 'Salīdzini vēl';
+  verdict:
+    | 'Pērc tagad'
+    | 'Pagaidi'
+    | 'Salīdzini vēl';
   summary: string;
   reasons: string[];
   confidence: 'zema' | 'vidēja' | 'augsta';
 };
 
-const money = (value: number, currency = 'EUR') =>
-  new Intl.NumberFormat('lv-LV', { style: 'currency', currency }).format(value);
+const money = (
+  value: number,
+  currency = 'EUR',
+) =>
+  new Intl.NumberFormat('lv-LV', {
+    style: 'currency',
+    currency,
+  }).format(value);
 
 function shippingText(offer: any) {
   if (!offer) return 'Nav datu';
-  if (Number(offer.shipping) > 0) return money(Number(offer.shipping), offer.currency);
-  if (/free|bezmaksas/i.test(String(offer.deliveryMessage || ''))) return 'Bezmaksas';
-  if (offer.deliveryMessage) return offer.deliveryMessage;
+
+  if (offer.shippingKnown) {
+    if (Number(offer.shipping) > 0) {
+      return money(
+        Number(offer.shipping),
+        offer.currency,
+      );
+    }
+
+    if (
+      /free|bezmaksas/i.test(
+        String(offer.deliveryMessage || ''),
+      )
+    ) {
+      return 'Bezmaksas';
+    }
+
+    if (Number(offer.shipping) === 0) {
+      return '€0';
+    }
+  }
+
+  if (offer.deliveryMessage) {
+    return offer.deliveryMessage;
+  }
+
   return 'Nav datu';
 }
 
-export default function ProductDetail({ id }: { id: string }) {
-  const [product, setProduct] = useState<Product | null>(null);
+function offerLabel(
+  offer: any,
+  hasComparison: boolean,
+) {
+  if (
+    hasComparison &&
+    offer.isBestOverall
+  ) {
+    return '🏆 CENIQ izvēle';
+  }
+
+  if (
+    hasComparison &&
+    offer.isCheapest
+  ) {
+    return '💰 Lētākais';
+  }
+
+  return 'Piedāvājums';
+}
+
+export default function ProductDetail({
+  id,
+}: {
+  id: string;
+}) {
+  const [product, setProduct] =
+    useState<Product | null>(null);
   const [error, setError] = useState('');
-  const [refreshing, setRefreshing] = useState(false);
+  const [refreshing, setRefreshing] =
+    useState(false);
   const [saved, setSaved] = useState(false);
   const [target, setTarget] = useState('');
   const [alertMsg, setAlertMsg] = useState('');
+  const [showAllOffers, setShowAllOffers] =
+    useState(false);
 
-  const [verdict, setVerdict] = useState<AiVerdict | null>(null);
-  const [verdictLoading, setVerdictLoading] = useState(false);
-  const [verdictError, setVerdictError] = useState('');
+  const [verdict, setVerdict] =
+    useState<AiVerdict | null>(null);
+  const [verdictLoading, setVerdictLoading] =
+    useState(false);
+  const [verdictError, setVerdictError] =
+    useState('');
 
   async function load() {
-    const response = await fetch(`/api/products/${encodeURIComponent(id)}`, {
-      cache: 'no-store',
-    });
+    const response = await fetch(
+      `/api/products/${encodeURIComponent(id)}`,
+      { cache: 'no-store' },
+    );
+
     const data = await response.json();
 
     if (!response.ok) {
-      setError(data.error || 'Produkts nav atrasts.');
+      setError(
+        data.error || 'Produkts nav atrasts.',
+      );
       return;
     }
 
     setProduct(data.product);
 
-    if (!target && data.product.currentBestPrice) {
-      setTarget((data.product.currentBestPrice * 0.95).toFixed(2));
+    if (
+      !target &&
+      data.product.currentBestPrice
+    ) {
+      setTarget(
+        (
+          data.product.currentBestPrice * 0.95
+        ).toFixed(2),
+      );
     }
   }
 
@@ -57,40 +137,100 @@ export default function ProductDetail({ id }: { id: string }) {
     load();
   }, [id]);
 
-  const best = useMemo(
+  const sortedOffers = useMemo(
     () =>
-      product?.offers?.find((offer: any) => offer.isBestOverall) ||
-      product?.offers?.find((offer: any) => offer.isCheapest) ||
-      product?.offers?.[0],
+      [...(product?.offers || [])].sort(
+        (a: any, b: any) => {
+          if (
+            a.isBestOverall !== b.isBestOverall
+          ) {
+            return a.isBestOverall ? -1 : 1;
+          }
+
+          return a.totalPrice - b.totalPrice;
+        },
+      ),
     [product],
   );
 
-  const hasComparison = Number(product?.offers?.length || 0) > 1;
+  const storeCount = useMemo(
+    () =>
+      new Set(
+        sortedOffers.map(
+          (offer: any) =>
+            offer.merchantDomain ||
+            offer.merchant,
+        ),
+      ).size,
+    [sortedOffers],
+  );
+
+  const hasComparison = storeCount > 1;
+  const topOffers = sortedOffers.slice(0, 3);
+  const visibleAllOffers = showAllOffers
+    ? sortedOffers
+    : sortedOffers.slice(0, 8);
+
+  const best =
+    sortedOffers.find(
+      (offer: any) => offer.isBestOverall,
+    ) ||
+    sortedOffers.find(
+      (offer: any) => offer.isCheapest,
+    ) ||
+    sortedOffers[0];
 
   async function refresh() {
     setRefreshing(true);
     setError('');
 
     try {
-      const start = await fetch(`/api/products/${encodeURIComponent(id)}/refresh`, {
-        method: 'POST',
-      });
+      const start = await fetch(
+        `/api/products/${encodeURIComponent(
+          id,
+        )}/refresh`,
+        { method: 'POST' },
+      );
+
       const startData = await start.json();
 
       if (!start.ok) {
-        throw new Error(startData.error || 'Neizdevās atjaunot cenas.');
+        throw new Error(
+          startData.error ||
+            'Neizdevās atjaunot cenas.',
+        );
       }
 
-      for (let attempt = 0; attempt < 35; attempt += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 1600));
+      if (!startData.pending) {
+        await load();
+        setVerdict(null);
+        return;
+      }
+
+      for (
+        let attempt = 0;
+        attempt < 35;
+        attempt += 1
+      ) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, 1600),
+        );
 
         const poll = await fetch(
-          `/api/products/${encodeURIComponent(id)}/refresh?taskId=${encodeURIComponent(startData.taskId)}`,
+          `/api/products/${encodeURIComponent(
+            id,
+          )}/refresh?taskId=${encodeURIComponent(
+            startData.taskId,
+          )}`,
         );
+
         const pollData = await poll.json();
 
         if (!poll.ok) {
-          throw new Error(pollData.error || 'Neizdevās atjaunot cenas.');
+          throw new Error(
+            pollData.error ||
+              'Neizdevās atjaunot cenas.',
+          );
         }
 
         if (pollData.pending) continue;
@@ -99,19 +239,34 @@ export default function ProductDetail({ id }: { id: string }) {
         setVerdict(null);
         return;
       }
+
+      throw new Error(
+        'Cenu atjaunošana aizņēma pārāk ilgu laiku.',
+      );
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Neizdevās atjaunot.');
+      setError(
+        e instanceof Error
+          ? e.message
+          : 'Neizdevās atjaunot.',
+      );
     } finally {
       setRefreshing(false);
     }
   }
 
   async function wishlist() {
-    const response = await fetch('/api/wishlist', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ productId: id }),
-    });
+    const response = await fetch(
+      '/api/wishlist',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          productId: id,
+        }),
+      },
+    );
 
     if (response.status === 401) {
       window.location.href = '/login';
@@ -126,7 +281,9 @@ export default function ProductDetail({ id }: { id: string }) {
 
     const response = await fetch('/api/alerts', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+      },
       body: JSON.stringify({
         productId: id,
         targetPrice: Number(target),
@@ -145,7 +302,8 @@ export default function ProductDetail({ id }: { id: string }) {
     setAlertMsg(
       response.ok
         ? 'Brīdinājums izveidots ✓'
-        : data.error || 'Neizdevās izveidot brīdinājumu.',
+        : data.error ||
+            'Neizdevās izveidot brīdinājumu.',
     );
   }
 
@@ -157,19 +315,27 @@ export default function ProductDetail({ id }: { id: string }) {
 
     try {
       const response = await fetch(
-        `/api/products/${encodeURIComponent(id)}/verdict`,
+        `/api/products/${encodeURIComponent(
+          id,
+        )}/verdict`,
         { method: 'POST' },
       );
+
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || 'CENIQ AI analīze neizdevās.');
+        throw new Error(
+          data.error ||
+            'CENIQ AI analīze neizdevās.',
+        );
       }
 
       setVerdict(data.verdict);
     } catch (e) {
       setVerdictError(
-        e instanceof Error ? e.message : 'CENIQ AI analīze neizdevās.',
+        e instanceof Error
+          ? e.message
+          : 'CENIQ AI analīze neizdevās.',
       );
     } finally {
       setVerdictLoading(false);
@@ -179,7 +345,9 @@ export default function ProductDetail({ id }: { id: string }) {
   if (error && !product) {
     return (
       <div className="container standalone">
-        <div className="errorbox">{error}</div>
+        <div className="errorbox">
+          {error}
+        </div>
       </div>
     );
   }
@@ -187,7 +355,9 @@ export default function ProductDetail({ id }: { id: string }) {
   if (!product) {
     return (
       <div className="container standalone">
-        <div className="loaderline">Ielādē produktu…</div>
+        <div className="loaderline">
+          Ielādē produktu…
+        </div>
       </div>
     );
   }
@@ -201,14 +371,23 @@ export default function ProductDetail({ id }: { id: string }) {
       <section className="producthero">
         <div className="detailimage">
           {product.image ? (
-            <img src={product.image} alt="" />
+            <img
+              src={product.image}
+              alt={product.title}
+            />
           ) : (
-            <div className="imagefallback">C</div>
+            <div className="imagefallback">
+              C
+            </div>
           )}
         </div>
 
         <div className="detailcopy">
-          <div className="eyebrow">{product.brand || 'CENIQ atrasts produkts'}</div>
+          <div className="eyebrow">
+            {product.brand ||
+              'CENIQ atrasts produkts'}
+          </div>
+
           <h1>{product.title}</h1>
 
           <div className="detailscore">
@@ -216,7 +395,10 @@ export default function ProductDetail({ id }: { id: string }) {
               <span>Labākā atrastā cena</span>
               <strong>
                 {product.currentBestPrice
-                  ? money(product.currentBestPrice, product.currency)
+                  ? money(
+                      product.currentBestPrice,
+                      product.currency,
+                    )
                   : '—'}
               </strong>
             </div>
@@ -228,14 +410,21 @@ export default function ProductDetail({ id }: { id: string }) {
           </div>
 
           <p className="muted">
-            CENIQ vērtējums ņem vērā cenu, piedāvājumu skaitu, piegādes un
-            tirgotāja signālus. Ja datu ir maz, vērtējums tiek apzināti
-            samazināts.
+            CENIQ vērtējums raksturo
+            konkrētā piedāvājuma kvalitāti,
+            nevis paša produkta kvalitāti.
+            Datu pārliecība tiek rādīta
+            atsevišķi.
           </p>
 
           <div className="detailactions">
-            <button className="primary" onClick={wishlist}>
-              {saved ? '♥ Saglabāts' : '♡ Saglabāt izlasē'}
+            <button
+              className="primary"
+              onClick={wishlist}
+            >
+              {saved
+                ? '♥ Saglabāts'
+                : '♡ Saglabāt izlasē'}
             </button>
 
             <button
@@ -243,18 +432,36 @@ export default function ProductDetail({ id }: { id: string }) {
               onClick={refresh}
               disabled={refreshing}
             >
-              {refreshing ? 'Atjauno…' : '↻ Atjaunot cenas'}
+              {refreshing
+                ? 'Atjauno…'
+                : '↻ Atjaunot cenas'}
             </button>
           </div>
 
           {best && (
             <div className="recommend">
-              <span>{hasComparison ? '🏆 CENIQ izvēle' : 'ATRastais piedāvājums'}</span>
+              <span>
+                {hasComparison
+                  ? '🏆 CENIQ IZVĒLE'
+                  : 'ATRASTS PIEDĀVĀJUMS'}
+              </span>
+
               <b>{best.merchant}</b>
+
               <p>
-                {money(best.totalPrice, best.currency)} kopā · Piegāde:{' '}
+                {money(
+                  best.totalPrice,
+                  best.currency,
+                )}{' '}
+                kopā* · Piegāde:{' '}
                 {shippingText(best)}
               </p>
+
+              {best.variantLabel && (
+                <small>
+                  Variants: {best.variantLabel}
+                </small>
+              )}
             </div>
           )}
 
@@ -270,29 +477,44 @@ export default function ProductDetail({ id }: { id: string }) {
               </div>
 
               {verdict && (
-                <small>{verdict.confidence} pārliecība</small>
+                <small>
+                  {verdict.confidence}{' '}
+                  pārliecība
+                </small>
               )}
             </div>
 
             {verdict ? (
               <>
                 <p>{verdict.summary}</p>
+
                 <ul>
-                  {verdict.reasons.map((reason) => (
-                    <li key={reason}>{reason}</li>
-                  ))}
+                  {verdict.reasons.map(
+                    (reason) => (
+                      <li key={reason}>
+                        {reason}
+                      </li>
+                    ),
+                  )}
                 </ul>
-                <button className="verdictrefresh" onClick={getAiVerdict}>
+
+                <button
+                  className="verdictrefresh"
+                  onClick={getAiVerdict}
+                >
                   ↻ Analizēt vēlreiz
                 </button>
               </>
             ) : (
               <>
                 <p>
-                  CENIQ AI apskatīs pašreizējo cenu, pieejamos veikalus,
-                  piegādes/reitinga signālus un cenu vēsturi. Trūkstošus datus
-                  tas neizdomās.
+                  AI izmanto tikai CENIQ
+                  savāktos cenu, veikalu,
+                  piegādes un cenu vēstures
+                  datus. Trūkstošus faktus tas
+                  neizdomā.
                 </p>
+
                 <button
                   className="primary"
                   onClick={getAiVerdict}
@@ -305,72 +527,191 @@ export default function ProductDetail({ id }: { id: string }) {
               </>
             )}
 
-            {verdictError && <small className="verdictError">{verdictError}</small>}
+            {verdictError && (
+              <small className="verdictError">
+                {verdictError}
+              </small>
+            )}
           </div>
         </div>
       </section>
 
-      {error && <div className="errorbox">{error}</div>}
+      {error && (
+        <div className="errorbox">{error}</div>
+      )}
 
       <section className="detailsection">
         <div className="sectiontitle">
           <div>
-            <span>SALĪDZINI</span>
-            <h2>Veikalu piedāvājumi</h2>
+            <span>TOP PIEDĀVĀJUMI</span>
+            <h2>
+              {storeCount >= 3
+                ? '3 labākie veikali'
+                : storeCount === 2
+                  ? '2 atrastie veikali'
+                  : 'Atrasts piedāvājums'}
+            </h2>
           </div>
-          <p>{product.offers.length} piedāvājumi</p>
+
+          <p>
+            {storeCount}{' '}
+            {storeCount === 1
+              ? 'veikals'
+              : 'veikali'}
+          </p>
         </div>
 
-        <div className="offertable">
-          {product.offers.map((offer: any) => (
-            <div
-              className={`offerrow ${
-                hasComparison && offer.isBestOverall ? 'best' : ''
-              }`}
-              key={offer.id}
-            >
-              <div>
-                <b>{offer.merchant}</b>
-                <span>
-                  {hasComparison && offer.isBestOverall
-                    ? '🏆 CENIQ izvēle'
-                    : hasComparison && offer.isCheapest
-                      ? '💰 Lētākais'
-                      : 'Piedāvājums'}
-                </span>
-              </div>
-
-              <div>
-                <span>Prece</span>
-                <b>{money(offer.price, offer.currency)}</b>
-              </div>
-
-              <div>
-                <span>Piegāde</span>
-                <b>{shippingText(offer)}</b>
-              </div>
-
-              <div>
-                <span>Kopā*</span>
-                <strong>{money(offer.totalPrice, offer.currency)}</strong>
-              </div>
-
-              <a
-                className="offercta"
-                href={`/api/out?offerId=${encodeURIComponent(offer.id)}`}
-                target="_blank"
-                rel="nofollow sponsored noopener"
+        <div className="topoffergrid">
+          {topOffers.map(
+            (offer: any, index: number) => (
+              <article
+                className={`topoffer ${
+                  offer.isBestOverall
+                    ? 'topoffer-best'
+                    : ''
+                }`}
+                key={offer.id}
               >
-                Uz veikalu ↗
-              </a>
-            </div>
-          ))}
+                <div className="topofferindex">
+                  0{index + 1}
+                </div>
+
+                <div className="topoffermerchant">
+                  <span>
+                    {offerLabel(
+                      offer,
+                      hasComparison,
+                    )}
+                  </span>
+                  <h3>{offer.merchant}</h3>
+
+                  {offer.variantLabel && (
+                    <small>
+                      {offer.variantLabel}
+                    </small>
+                  )}
+                </div>
+
+                <div className="topofferprice">
+                  <span>Kopā*</span>
+                  <strong>
+                    {money(
+                      offer.totalPrice,
+                      offer.currency,
+                    )}
+                  </strong>
+                  <small>
+                    Piegāde:{' '}
+                    {shippingText(offer)}
+                  </small>
+                </div>
+
+                <a
+                  className="offercta"
+                  href={`/api/out?offerId=${encodeURIComponent(
+                    offer.id,
+                  )}`}
+                  target="_blank"
+                  rel="nofollow sponsored noopener"
+                >
+                  Uz veikalu ↗
+                </a>
+              </article>
+            ),
+          )}
         </div>
 
         <p className="offerdisclaimer">
-          * Ja piegādes cena nav pieejama avota datos, “Kopā” pašlaik nozīmē
-          preces cenu. CENIQ nerāda nezināmu piegādi kā bezmaksas.
+          * Ja piegādes cena nav pieejama
+          avota datos, “Kopā” pašlaik nozīmē
+          preces cenu. CENIQ nezināmu piegādi
+          nerāda kā bezmaksas.
         </p>
+
+        {sortedOffers.length > 3 && (
+          <div className="alloffers">
+            <button
+              className="secondary showoffers"
+              onClick={() =>
+                setShowAllOffers(
+                  (current) => !current,
+                )
+              }
+            >
+              {showAllOffers
+                ? 'Paslēpt visus piedāvājumus'
+                : `Rādīt visus ${sortedOffers.length} piedāvājumus`}
+            </button>
+
+            {showAllOffers && (
+              <div className="offertable">
+                {visibleAllOffers.map(
+                  (offer: any) => (
+                    <div
+                      className={`offerrow ${
+                        offer.isBestOverall
+                          ? 'best'
+                          : ''
+                      }`}
+                      key={offer.id}
+                    >
+                      <div>
+                        <b>{offer.merchant}</b>
+                        <span>
+                          {offerLabel(
+                            offer,
+                            hasComparison,
+                          )}
+                          {offer.variantLabel
+                            ? ` · ${offer.variantLabel}`
+                            : ''}
+                        </span>
+                      </div>
+
+                      <div>
+                        <span>Prece</span>
+                        <b>
+                          {money(
+                            offer.price,
+                            offer.currency,
+                          )}
+                        </b>
+                      </div>
+
+                      <div>
+                        <span>Piegāde</span>
+                        <b>
+                          {shippingText(offer)}
+                        </b>
+                      </div>
+
+                      <div>
+                        <span>Kopā*</span>
+                        <strong>
+                          {money(
+                            offer.totalPrice,
+                            offer.currency,
+                          )}
+                        </strong>
+                      </div>
+
+                      <a
+                        className="offercta"
+                        href={`/api/out?offerId=${encodeURIComponent(
+                          offer.id,
+                        )}`}
+                        target="_blank"
+                        rel="nofollow sponsored noopener"
+                      >
+                        Uz veikalu ↗
+                      </a>
+                    </div>
+                  ),
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </section>
 
       <section className="twocol">
@@ -381,14 +722,23 @@ export default function ProductDetail({ id }: { id: string }) {
               <h2>Cenas dinamika</h2>
             </div>
           </div>
-          <PriceChart points={product.snapshots} currency={product.currency} />
+
+          <PriceChart
+            points={product.snapshots}
+            currency={product.currency}
+          />
         </div>
 
         <div className="detailsection alertbox">
-          <span className="eyebrow">CENU BRĪDINĀJUMS</span>
+          <span className="eyebrow">
+            CENU BRĪDINĀJUMS
+          </span>
+
           <h2>Pasaki savu cenu.</h2>
+
           <p>
-            Mēs pārbaudīsim cenu un paziņosim, kad tā sasniegs tavu slieksni.
+            Mēs pārbaudīsim cenu un paziņosim,
+            kad tā sasniegs tavu slieksni.
           </p>
 
           <label>
@@ -398,13 +748,16 @@ export default function ProductDetail({ id }: { id: string }) {
               min="1"
               step="0.01"
               value={target}
-              onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                setTarget(e.target.value)
-              }
+              onChange={(
+                e: ChangeEvent<HTMLInputElement>,
+              ) => setTarget(e.target.value)}
             />
           </label>
 
-          <button className="primary" onClick={createAlert}>
+          <button
+            className="primary"
+            onClick={createAlert}
+          >
             🔔 Izveidot brīdinājumu
           </button>
 

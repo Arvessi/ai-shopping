@@ -23,6 +23,7 @@ model User {
 model Product {
   id               String   @id @default(cuid())
   externalId       String   @unique
+  sourceProductId    String?
   gid              String?
   dataDocId        String?
   title            String
@@ -50,8 +51,10 @@ model Offer {
   product         Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
   merchant        String
   merchantDomain  String?
+  variantLabel    String?
   price           Float
   shipping        Float    @default(0)
+  shippingKnown   Boolean  @default(false)
   totalPrice      Float
   currency        String   @default("EUR")
   sellerRating    Float?
@@ -141,4 +144,16 @@ model AffiliateClick {
   createdAt DateTime @default(now())
 
   @@index([offerId, createdAt])
+}
+
+model SearchCache {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  query     String
+  results   Json
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([expiresAt])
 }

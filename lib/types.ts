@@ -2,8 +2,10 @@ export type OfferView = {
   id?: string;
   merchant: string;
   merchantDomain?: string;
+  variantLabel?: string;
   price: number;
   shipping: number;
+  shippingKnown?: boolean;
   totalPrice: number;
   currency: string;
   dealScore: number;
@@ -18,6 +20,7 @@ export type OfferView = {
 export type ProductResult = {
   id: string;
   externalId: string;
+  sourceProductId?: string;
   gid?: string;
   dataDocId?: string;
   title: string;
@@ -31,6 +34,7 @@ export type ProductResult = {
   dealScore: number;
   offers: OfferView[];
   storesCount?: number;
+  variants?: string[];
 };
 
 export type AiShoppingPlan = {

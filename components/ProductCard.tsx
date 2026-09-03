@@ -1,12 +1,18 @@
 'use client';
 
 import Link from 'next/link';
-import type { OfferView, ProductResult } from '@/lib/types';
-import { useState } from 'react';
+import { useState, type MouseEvent } from 'react';
+import type {
+  OfferView,
+  ProductResult,
+} from '@/lib/types';
 
 function money(value: number, currency = 'EUR') {
   try {
-    return new Intl.NumberFormat('lv-LV', { style: 'currency', currency }).format(value);
+    return new Intl.NumberFormat('lv-LV', {
+      style: 'currency',
+      currency,
+    }).format(value);
   } catch {
     return `${value.toFixed(2)} ${currency}`;
   }
@@ -14,33 +20,89 @@ function money(value: number, currency = 'EUR') {
 
 function shippingText(offer?: OfferView) {
   if (!offer) return 'Nav datu';
-  if (offer.shipping > 0) return money(offer.shipping, offer.currency);
-  if (/free|bezmaksas/i.test(offer.deliveryMessage || '')) return 'Bezmaksas';
-  if (offer.deliveryMessage) return offer.deliveryMessage;
+
+  if (offer.shippingKnown) {
+    if (offer.shipping > 0) {
+      return money(offer.shipping, offer.currency);
+    }
+
+    if (
+      /free|bezmaksas/i.test(
+        offer.deliveryMessage || '',
+      )
+    ) {
+      return 'Bezmaksas';
+    }
+
+    if (offer.shipping === 0) {
+      return '€0';
+    }
+  }
+
+  if (offer.deliveryMessage) {
+    return offer.deliveryMessage;
+  }
+
   return 'Nav datu';
 }
 
 function confidence(product: ProductResult) {
   const signalCount = product.offers.filter(
-    (offer) => offer.sellerRating || offer.shipping > 0 || offer.deliveryMessage,
+    (offer) =>
+      offer.sellerRating != null ||
+      offer.shippingKnown ||
+      offer.deliveryMessage,
   ).length;
 
-  if (product.offers.length >= 3 && signalCount >= 2) return 'augsta';
-  if (product.offers.length >= 2 || signalCount >= 1) return 'vidēja';
+  if (
+    (product.storesCount || product.offers.length) >= 3 &&
+    signalCount >= 2
+  ) {
+    return 'augsta';
+  }
+
+  if (
+    (product.storesCount || product.offers.length) >= 2 ||
+    signalCount >= 1
+  ) {
+    return 'vidēja';
+  }
+
   return 'zema';
 }
 
-export default function ProductCard({ product }: { product: ProductResult; key?: string }) {
+export default function ProductCard({
+  product,
+}: {
+  product: ProductResult;
+  key?: string;
+}) {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
-  const hasComparison = product.offers.length > 1;
+  const storeCount =
+    product.storesCount ||
+    new Set(
+      product.offers.map(
+        (offer) =>
+          offer.merchantDomain || offer.merchant,
+      ),
+    ).size;
+
+  const hasComparison = storeCount > 1;
+
   const best =
-    product.offers.find((offer) => offer.isBestOverall) ||
-    product.offers.find((offer) => offer.isCheapest) ||
+    product.offers.find(
+      (offer) => offer.isBestOverall,
+    ) ||
+    product.offers.find(
+      (offer) => offer.isCheapest,
+    ) ||
     product.offers[0];
 
-  async function save(e: React.MouseEvent) {
+  const scoreConfidence = confidence(product);
+
+  async function save(e: MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
 
@@ -48,7 +110,8 @@ export default function ProductCard({ product }: { product: ProductResult; key?:
       !product.id ||
       product.id.startsWith('pid:') ||
       product.id.startsWith('gid:') ||
-      product.id.startsWith('title:')
+      product.id.startsWith('title:') ||
+      product.id.startsWith('model:')
     ) {
       window.location.href = '/login';
       return;
@@ -58,22 +121,33 @@ export default function ProductCard({ product }: { product: ProductResult; key?:
 
     const response = await fetch('/api/wishlist', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ productId: product.id }),
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        productId: product.id,
+      }),
     });
 
-    if (response.status === 401) window.location.href = '/login';
-    else if (response.ok) setSaved(true);
+    if (response.status === 401) {
+      window.location.href = '/login';
+    } else if (response.ok) {
+      setSaved(true);
+    }
 
     setSaving(false);
   }
 
-  const href = `/product/${encodeURIComponent(product.id)}`;
+  const href = `/product/${encodeURIComponent(
+    product.id,
+  )}`;
 
   return (
     <Link href={href} className="productcard">
       <button
-        className={`heart ${saved ? 'saved' : ''}`}
+        className={`heart ${
+          saved ? 'saved' : ''
+        }`}
         onClick={save}
         disabled={saving}
         aria-label="Saglabāt izlasē"
@@ -83,7 +157,11 @@ export default function ProductCard({ product }: { product: ProductResult; key?:
 
       <div className="productimage">
         {product.image ? (
-          <img src={product.image} alt="" loading="lazy" />
+          <img
+            src={product.image}
+            alt={product.title}
+            loading="lazy"
+          />
         ) : (
           <div className="imagefallback">C</div>
         )}
@@ -91,21 +169,51 @@ export default function ProductCard({ product }: { product: ProductResult; key?:
 
       <div className="productbody">
         <div className="productmeta">
-          <span>{product.brand || 'Produkts'}</span>
-          <span>{product.offers.length || product.storesCount || 1} piedāv.</span>
+          <span>
+            {product.brand || 'Produkts'}
+          </span>
+          <span>
+            {storeCount}{' '}
+            {storeCount === 1
+              ? 'veikals'
+              : 'veikali'}
+          </span>
         </div>
 
         <h3>{product.title}</h3>
 
+        {!!product.variants?.length && (
+          <div className="variantchips">
+            {product.variants
+              .slice(0, 4)
+              .map((variant) => (
+                <span key={variant}>
+                  {variant}
+                </span>
+              ))}
+
+            {product.variants.length > 4 && (
+              <span>
+                +{product.variants.length - 4}
+              </span>
+            )}
+          </div>
+        )}
+
         <div className="priceRow">
           <div>
             <small>no</small>
-            <strong>{money(product.bestPrice, product.currency)}</strong>
+            <strong>
+              {money(
+                product.bestPrice,
+                product.currency,
+              )}
+            </strong>
           </div>
 
           <div
-            className="score"
-            title={`CENIQ datu pārliecība: ${confidence(product)}`}
+            className={`score score-${scoreConfidence}`}
+            title={`CENIQ datu pārliecība: ${scoreConfidence}`}
           >
             <b>{product.dealScore}</b>
             <span>/100</span>
@@ -113,14 +221,29 @@ export default function ProductCard({ product }: { product: ProductResult; key?:
         </div>
 
         <div className="scorelabel">
-          CENIQ piedāvājuma vērtējums · {confidence(product)} pārliecība
+          CENIQ vērtējums · {scoreConfidence}{' '}
+          pārliecība
         </div>
 
         <div className="cardexpand">
           <div>
-            <span>{hasComparison ? 'CENIQ izvēle' : 'Atrasts veikals'}</span>
-            <b>{best?.merchant || 'Veikals nav zināms'}</b>
+            <span>
+              {hasComparison
+                ? 'CENIQ izvēle'
+                : 'Atrasts veikals'}
+            </span>
+            <b>
+              {best?.merchant ||
+                'Veikals nav zināms'}
+            </b>
           </div>
+
+          {best?.variantLabel && (
+            <div>
+              <span>Variants</span>
+              <b>{best.variantLabel}</b>
+            </div>
+          )}
 
           <div>
             <span>Piegāde</span>
@@ -128,16 +251,24 @@ export default function ProductCard({ product }: { product: ProductResult; key?:
           </div>
 
           <div>
-            <span>Kopā</span>
+            <span>Kopā*</span>
             <b>
               {best
-                ? money(best.totalPrice, best.currency)
-                : money(product.bestPrice, product.currency)}
+                ? money(
+                    best.totalPrice,
+                    best.currency,
+                  )
+                : money(
+                    product.bestPrice,
+                    product.currency,
+                  )}
             </b>
           </div>
 
           <span className="comparecta">
-            {hasComparison ? 'Salīdzināt piedāvājumus →' : 'Skatīt piedāvājumu →'}
+            {hasComparison
+              ? 'Salīdzināt veikalus →'
+              : 'Skatīt piedāvājumu →'}
           </span>
         </div>
       </div>
