@@ -2,7 +2,7 @@ import type { OfferView, ProductResult } from './types';
 
 const API_BASE = 'https://api.dataforseo.com/v3';
 
-const EXCLUDED_COMPARISON_DOMAINS = ['kurpirkt.lv', 'salidzini.lv'];
+const EXCLUDED_COMPARISON_DOMAINS = ['kurpirkt.lv', 'salidzini.lv', 'ceno.lv'];
 
 type Json = Record<string, any>;
 
@@ -204,13 +204,40 @@ function offerScore(
   rating?: number,
   deliveryMessage?: string,
   index = 0,
+  offerCount = 1,
 ) {
-  const priceComponent = maxTotal === minTotal ? 42 : ((maxTotal - total) / (maxTotal - minTotal)) * 42;
-  const reputationComponent = rating ? (rating / 5) * 22 : 10;
-  const deliveryComponent = /free|bezmaksas/i.test(deliveryMessage || '') ? 14 : deliveryMessage ? 9 : 6;
-  const relevanceComponent = Math.max(2, 12 - index * 0.5);
+  const priceComponent =
+    offerCount > 1
+      ? maxTotal === minTotal
+        ? 18
+        : 8 + ((maxTotal - total) / (maxTotal - minTotal)) * 28
+      : 10;
+
+  const reputationComponent = rating ? (rating / 5) * 18 : 4;
+  const deliveryComponent = /free|bezmaksas/i.test(deliveryMessage || '')
+    ? 10
+    : deliveryMessage
+      ? 6
+      : 2;
+
+  const coverageComponent =
+    offerCount >= 4 ? 14 : offerCount >= 2 ? 9 : 3;
+
+  const relevanceComponent = Math.max(2, 8 - index * 0.5);
+
   return Math.round(
-    Math.max(45, Math.min(99, 20 + priceComponent + reputationComponent + deliveryComponent + relevanceComponent)),
+    Math.max(
+      35,
+      Math.min(
+        95,
+        22 +
+          priceComponent +
+          reputationComponent +
+          deliveryComponent +
+          coverageComponent +
+          relevanceComponent,
+      ),
+    ),
   );
 }
 
@@ -422,7 +449,7 @@ export function mapFastProductSearch(json: Json): ProductResult[] {
 
     const offers: OfferView[] = rawOffers.map((offer, index) => ({
       ...offer,
-      dealScore: offerScore(offer.totalPrice, min, max, offer.sellerRating, offer.deliveryMessage, index),
+      dealScore: offerScore(offer.totalPrice, min, max, offer.sellerRating, offer.deliveryMessage, index, rawOffers.length),
       isCheapest: offer.totalPrice === min,
       isBestOverall: false,
     }));
@@ -431,7 +458,10 @@ export function mapFastProductSearch(json: Json): ProductResult[] {
     offers.forEach((offer, index) => {
       if (offer.dealScore > offers[bestIndex].dealScore) bestIndex = index;
     });
-    if (offers[bestIndex]) offers[bestIndex].isBestOverall = true;
+
+    if (offers.length > 1 && offers[bestIndex]) {
+      offers[bestIndex].isBestOverall = true;
+    }
 
     return {
       id: key,
@@ -452,8 +482,31 @@ export function mapFastProductSearch(json: Json): ProductResult[] {
     };
   });
 
-  return products
-    .filter((product) => Number.isFinite(product.bestPrice) && product.bestPrice > 0)
+  const validProducts = products.filter(
+    (product) => Number.isFinite(product.bestPrice) && product.bestPrice > 0,
+  );
+
+  if (validProducts.length > 1) {
+    const prices = validProducts.map((product) => product.bestPrice);
+    const cohortMin = Math.min(...prices);
+    const cohortMax = Math.max(...prices);
+
+    for (const product of validProducts) {
+      if (cohortMax > cohortMin) {
+        const relativePrice =
+          (cohortMax - product.bestPrice) / (cohortMax - cohortMin);
+
+        // Small result-set adjustment only. Product-level offer quality still
+        // does most of the work; this simply prevents equal scores for
+        // otherwise similar search results with noticeably different prices.
+        product.dealScore = Math.round(
+          Math.max(35, Math.min(95, product.dealScore + relativePrice * 14 - 7)),
+        );
+      }
+    }
+  }
+
+  return validProducts
     .sort((a, b) => b.dealScore - a.dealScore || a.bestPrice - b.bestPrice)
     .slice(0, 24);
 }
@@ -487,7 +540,7 @@ export function mapSellerOffers(json: Json): OfferView[] {
 
   const scored: OfferView[] = offers.map((offer, index) => ({
     ...offer,
-    dealScore: offerScore(offer.totalPrice, min, max, offer.sellerRating, offer.deliveryMessage, index),
+    dealScore: offerScore(offer.totalPrice, min, max, offer.sellerRating, offer.deliveryMessage, index, offers.length),
     isCheapest: offer.totalPrice === min,
     isBestOverall: false,
   }));
@@ -496,7 +549,10 @@ export function mapSellerOffers(json: Json): OfferView[] {
   scored.forEach((offer, index) => {
     if (offer.dealScore > scored[best].dealScore) best = index;
   });
-  scored[best].isBestOverall = true;
+
+  if (scored.length > 1) {
+    scored[best].isBestOverall = true;
+  }
 
   return scored.sort((a, b) => a.totalPrice - b.totalPrice);
 }

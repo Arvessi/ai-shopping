@@ -93,6 +93,10 @@ export async function persistProducts(products: ProductResult[]) {
 export async function replaceOffers(productId: string, offers: OfferView[]) {
   if (!databaseConfigured()) return;
   const bestPrice = offers.length ? Math.min(...offers.map((o) => o.totalPrice)) : undefined;
+  const productScore = offers.length
+    ? Math.max(...offers.map((o) => o.dealScore))
+    : 50;
+
   await prisma.$transaction([
     prisma.offer.deleteMany({ where: { productId } }),
     ...(offers.length ? [prisma.offer.createMany({ data: offers.map((o) => ({
@@ -111,7 +115,7 @@ export async function replaceOffers(productId: string, offers: OfferView[]) {
       isCheapest: o.isCheapest,
       isBestOverall: o.isBestOverall,
     })) })] : []),
-    prisma.product.update({ where: { id: productId }, data: { currentBestPrice: bestPrice, dealScore: offers.find((o) => o.isBestOverall)?.dealScore || 50, lastSyncedAt: new Date() } }),
+    prisma.product.update({ where: { id: productId }, data: { currentBestPrice: bestPrice, dealScore: offers.find((o) => o.isBestOverall)?.dealScore || productScore, lastSyncedAt: new Date() } }),
     ...(bestPrice !== undefined ? [prisma.priceSnapshot.create({ data: { productId, price: bestPrice, currency: offers[0]?.currency || 'EUR' } })] : []),
   ]);
 }

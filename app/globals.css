@@ -19,3 +19,23 @@
 .accountpage{padding:65px 0}.accounthead{display:flex;justify-content:space-between;align-items:flex-end;gap:25px;margin-bottom:45px}.accounthead h1{font-size:46px;letter-spacing:-.05em;margin:7px 0}.accounthead p{margin:0;color:var(--muted)}.accountactions{display:flex;gap:8px}.accountsection{margin:50px 0}.accountlist{border:1px solid var(--line);background:var(--surface);border-radius:18px;overflow:hidden}.accountrow{display:flex;align-items:center;gap:14px;padding:14px 16px;border-top:1px solid var(--line)}.accountrow:first-child{border-top:0}.tinyimage{width:54px;height:54px;border-radius:11px;background:var(--surface2);display:grid;place-items:center;overflow:hidden;font-weight:900;color:var(--accent)}.tinyimage img{width:100%;height:100%;object-fit:contain}.grow{flex:1;display:flex;min-width:0;flex-direction:column;gap:3px}.grow b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.grow span{font-size:12px;color:var(--muted)}.textbtn{background:transparent;border:0;color:var(--muted);font-size:12px}.emptybox,.emptyState{text-align:center;padding:40px;border:1px dashed var(--line);border-radius:18px;color:var(--muted)}.emptybox a{color:var(--accent);font-weight:750}.emptyState h1{color:var(--text)}.linkbtn{display:inline-block;margin-top:10px}.prose{max-width:790px;padding-top:70px;padding-bottom:80px}.prose h1{font-size:48px;letter-spacing:-.05em}.prose h2{margin-top:35px}.prose p{color:var(--muted);line-height:1.75}.prose strong{color:var(--text)}
 @media(max-width:1000px){.productgrid{grid-template-columns:repeat(2,1fr)}.popularRow{grid-template-columns:repeat(3,1fr)}.categorygrid{grid-template-columns:repeat(4,1fr)}.navlinks{display:none}.producthero{grid-template-columns:1fr;gap:28px}.detailimage{height:420px}.twocol{grid-template-columns:1fr}.offerrow{grid-template-columns:1.2fr .7fr .7fr auto}.offerrow>div:nth-child(3){display:none}.footergrid{grid-template-columns:2fr 1fr 1fr}.footergrid>div:last-child{grid-column:2/4}}
 @media(max-width:700px){.container{width:min(100% - 26px,1180px)}.topbar{height:66px}.navaccount{display:none}.hero{min-height:auto;padding:76px 13px 55px}.hero h1{font-size:49px}.hero>p{font-size:15px}.modes{width:100%;max-width:500px}.modes button{flex:1;padding:10px 8px;font-size:12px}.bigsearch{border-radius:16px}.bigsearch button{padding:13px 14px}.bigsearch input{font-size:14px}.productgrid{grid-template-columns:1fr}.productcard{min-height:auto}.productimage{height:260px}.productcard .cardexpand{max-height:190px;opacity:1;margin-top:18px;padding-top:15px;border-color:var(--line)}.popularRow{grid-template-columns:1fr 1fr}.categorygrid{grid-template-columns:1fr 1fr}.how{padding:28px;margin-top:35px}.howintro h2{font-size:34px}.howgrid{grid-template-columns:1fr}.sectiontitle{align-items:flex-start}.sectiontitle h2{font-size:27px}.sectiontitle p{display:none}.footergrid{grid-template-columns:1fr 1fr;gap:30px}.footergrid>div:first-child{grid-column:1/3}.footergrid>div:last-child{grid-column:auto}.productpage{padding-top:25px}.producthero{padding-top:25px}.detailimage{height:330px;padding:32px}.detailcopy h1{font-size:34px}.detailscore strong{font-size:28px}.offerrow{grid-template-columns:1fr auto;gap:8px}.offerrow>div:nth-child(2),.offerrow>div:nth-child(3){display:none}.offerrow .offercta{grid-column:1/3}.accounthead{align-items:flex-start;flex-direction:column}.accounthead h1{font-size:36px}.accountactions{width:100%;flex-wrap:wrap}.accountrow{flex-wrap:wrap}.accountrow .grow{min-width:60%}.smallcta{margin-left:auto}.prose h1{font-size:38px}}
+
+
+/* CENIQ decision engine v1 */
+.aiverdict{
+  margin-top:14px;
+  padding:18px;
+  border:1px solid color-mix(in srgb,var(--accent) 32%,var(--line));
+  background:linear-gradient(135deg,color-mix(in srgb,var(--accentSoft) 82%,var(--surface)),var(--surface));
+  border-radius:17px;
+}
+.aiverdicthead{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}
+.aiverdicthead span{display:block;color:var(--accent);font-size:11px;font-weight:900;letter-spacing:.1em}
+.aiverdicthead h3{margin:5px 0 0;font-size:21px;letter-spacing:-.035em}
+.aiverdicthead small{white-space:nowrap;border:1px solid var(--line);background:var(--surface);padding:6px 8px;border-radius:999px;color:var(--muted)}
+.aiverdict>p{color:var(--muted);font-size:13px;margin:12px 0}
+.aiverdict ul{margin:12px 0 4px;padding-left:19px;color:var(--text);font-size:13px}
+.aiverdict li{margin:6px 0}
+.verdictrefresh{border:0;background:transparent;color:var(--accent);padding:6px 0;font-weight:800}
+.verdictError{display:block;color:var(--danger);margin-top:10px}
+.offerdisclaimer{font-size:11px;color:var(--muted);margin:10px 2px 0}
