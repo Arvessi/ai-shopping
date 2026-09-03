@@ -2,6 +2,8 @@ import type { OfferView, ProductResult } from './types';
 
 const API_BASE = 'https://api.dataforseo.com/v3';
 
+const EXCLUDED_COMPARISON_DOMAINS = ['kurpirkt.lv', 'salidzini.lv'];
+
 type Json = Record<string, any>;
 
 type PriceObject = {
@@ -154,6 +156,35 @@ function normalizeTitle(title: string) {
     .trim();
 }
 
+function cleanProductTitle(title: string) {
+  const cleaned = title
+    .replace(/\s*[|–—-]\s*(buy|shop|cena|price|from|no)\b.*$/i, '')
+    .replace(/\b(cena\s+no|price\s+from)\s+\d+(?:[.,]\d+)?\s*€?.*$/i, '')
+    .replace(/[🏷️]+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return cleaned || title.trim();
+}
+
+function isExcludedComparisonSite(item: RawItem) {
+  const haystack = [
+    item.domain,
+    item.source,
+    item.marketplace,
+    item.seller,
+    item.seller_name,
+    item.url,
+    item.shopping_url,
+    item.marketplace_url,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  return EXCLUDED_COMPARISON_DOMAINS.some((domain) => haystack.includes(domain));
+}
+
 function inferBrand(title: string) {
   const token = title.trim().split(/\s+/)[0] || '';
   return token.length > 1 ? token.replace(/[,:;]+$/, '') : undefined;
@@ -215,28 +246,26 @@ function identifiers(item: RawItem) {
 
 function itemIdentity(item: RawItem) {
   const ids = identifiers(item);
+
   if (ids.productId) return `pid:${ids.productId}`;
   if (ids.gid) return `gid:${ids.gid}`;
   if (ids.dataDocId) return `doc:${ids.dataDocId}`;
-  return `title:${normalizeTitle(item.title || 'product')}`;
+
+  return `title:${normalizeTitle(cleanProductTitle(item.title || 'product'))}`;
 }
 
 function isProductLike(item: RawItem) {
   if (!item.title || directPrice(item) <= 0) return false;
+  if (isExcludedComparisonSite(item)) return false;
+
   const type = String(item.type || '').toLowerCase();
 
-  if (
+  return (
     type.includes('shopping') ||
     type.includes('popular_products') ||
     type.includes('commercial_units') ||
     type.includes('product')
-  ) {
-    return true;
-  }
-
-  // New Google Shopping markup can change item type names. Price + a merchant
-  // signal is enough for our first-pass product listing.
-  return Boolean(item.seller || item.seller_name || item.source || item.domain || item.marketplace || pickImage(item));
+  );
 }
 
 function collectProductItems(value: unknown, output: RawItem[] = []): RawItem[] {
@@ -260,15 +289,22 @@ function collectProductItems(value: unknown, output: RawItem[] = []): RawItem[] 
 }
 
 function merchantName(item: RawItem) {
-  return (
-    item.seller_name ||
-    item.seller ||
-    item.source ||
-    item.domain ||
-    item.marketplace ||
-    item.description?.split('\n')[0] ||
-    'Google Shopping'
-  );
+  const candidates = [
+    item.seller_name,
+    item.seller,
+    item.marketplace,
+    item.domain,
+    item.source,
+  ];
+
+  for (const candidate of candidates) {
+    const value = String(candidate || '').trim();
+    if (!value) continue;
+    if (/^(no|from|cena|price)$/i.test(value)) continue;
+    return value;
+  }
+
+  return 'Veikals';
 }
 
 function toOffer(item: RawItem): Omit<OfferView, 'dealScore' | 'isCheapest' | 'isBestOverall'> {
@@ -314,8 +350,27 @@ export function mapFastProductSearch(json: Json): ProductResult[] {
   const products: ProductResult[] = Array.from(groups.entries()).map(([key, items]) => {
     const sortedItems = [...items].sort((a, b) => directPrice(a) - directPrice(b));
     const first = sortedItems[0];
+    const visualItem = sortedItems.find((item) => Boolean(pickImage(item))) || first;
     const ids = identifiers(first);
-    const rawOffers = sortedItems.map(toOffer);
+
+    const uniqueOfferMap = new Map<string, ReturnType<typeof toOffer>>();
+
+    for (const item of sortedItems) {
+      if (isExcludedComparisonSite(item)) continue;
+
+      const offer = toOffer(item);
+      const offerKey = [
+        offer.merchant.toLowerCase(),
+        offer.totalPrice.toFixed(2),
+        offer.url || '',
+      ].join('|');
+
+      if (!uniqueOfferMap.has(offerKey)) {
+        uniqueOfferMap.set(offerKey, offer);
+      }
+    }
+
+    const rawOffers = Array.from(uniqueOfferMap.values());
     const totals = rawOffers.map((offer) => offer.totalPrice);
     const min = Math.min(...totals);
     const max = Math.max(...totals);
@@ -338,12 +393,12 @@ export function mapFastProductSearch(json: Json): ProductResult[] {
       externalId: key,
       gid: ids.gid,
       dataDocId: ids.dataDocId,
-      title: first.title || 'Produkts',
-      normalizedTitle: normalizeTitle(first.title || 'Produkts'),
-      brand: inferBrand(first.title || ''),
+      title: cleanProductTitle(first.title || 'Produkts'),
+      normalizedTitle: normalizeTitle(cleanProductTitle(first.title || 'Produkts')),
+      brand: inferBrand(cleanProductTitle(first.title || '')),
       category: 'Elektronika',
       description: first.description || first.snippet || undefined,
-      image: pickImage(first),
+      image: pickImage(visualItem),
       bestPrice: min,
       currency: offers[0]?.currency || directCurrency(first),
       dealScore: offers[bestIndex]?.dealScore || 50,
@@ -378,7 +433,7 @@ export function mapSellerOffers(json: Json): OfferView[] {
   }
 
   const raw: RawItem[] = (task.result || []).flatMap((result: Json) => flattenMerchant(result?.items || []));
-  const offers = raw.filter((item) => directPrice(item) > 0).map(toOffer);
+  const offers = raw.filter((item) => directPrice(item) > 0 && !isExcludedComparisonSite(item)).map(toOffer);
   if (!offers.length) return [];
 
   const totals = offers.map((offer) => offer.totalPrice);

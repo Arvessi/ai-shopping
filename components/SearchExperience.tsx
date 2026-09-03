@@ -16,9 +16,20 @@ const categories = [
 ];
 
 const fallbackPopular = ['iPhone 17 Pro', 'gaming monitors 240Hz', 'OLED TV 55', 'MacBook Air', 'wireless headphones'];
+const SEARCH_STATE_KEY = 'ceniq-search-state-v1';
+
+type SearchMode = 'search' | 'assistant';
+
+type SavedSearchState = {
+  query: string;
+  mode: SearchMode;
+  results: ProductResult[];
+  notice: string;
+  plan: AiShoppingPlan | null;
+};
 
 export default function SearchExperience() {
-  const [mode, setMode] = useState<'search' | 'assistant'>('search');
+  const [mode, setMode] = useState<SearchMode>('search');
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<ProductResult[]>([]);
   const [popular, setPopular] = useState<string[]>(fallbackPopular);
@@ -27,15 +38,69 @@ export default function SearchExperience() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [plan, setPlan] = useState<AiShoppingPlan | null>(null);
+  const [restored, setRestored] = useState(false);
 
   useEffect(() => {
     fetch('/api/popular')
       .then((response) => response.json())
       .then((data) => data.searches?.length && setPopular(data.searches))
       .catch(() => undefined);
+
+    try {
+      const saved = window.sessionStorage.getItem(SEARCH_STATE_KEY);
+
+      if (saved) {
+        const parsed = JSON.parse(saved) as Partial<SavedSearchState>;
+
+        if (typeof parsed.query === 'string') setQuery(parsed.query);
+        if (parsed.mode === 'assistant' || parsed.mode === 'search') setMode(parsed.mode);
+        if (Array.isArray(parsed.results)) setResults(parsed.results);
+        if (typeof parsed.notice === 'string') setNotice(parsed.notice);
+        if (parsed.plan) setPlan(parsed.plan);
+      } else {
+        const params = new URLSearchParams(window.location.search);
+        const urlQuery = params.get('q');
+        const urlMode = params.get('mode');
+
+        if (urlQuery) setQuery(urlQuery);
+        if (urlMode === 'assistant' || urlMode === 'search') setMode(urlMode);
+      }
+    } catch {
+      window.sessionStorage.removeItem(SEARCH_STATE_KEY);
+    } finally {
+      setRestored(true);
+    }
   }, []);
 
-  async function runDataSearch(searchQuery: string, searchMode: 'search' | 'assistant') {
+  useEffect(() => {
+    if (!restored) return;
+
+    const state: SavedSearchState = {
+      query,
+      mode,
+      results,
+      notice,
+      plan,
+    };
+
+    try {
+      window.sessionStorage.setItem(SEARCH_STATE_KEY, JSON.stringify(state));
+    } catch {
+      // sessionStorage can be unavailable in strict/private browser modes.
+    }
+  }, [restored, query, mode, results, notice, plan]);
+
+  function updateSearchUrl(searchQuery: string, searchMode: SearchMode) {
+    const url = new URL(window.location.href);
+
+    if (searchQuery) url.searchParams.set('q', searchQuery);
+    else url.searchParams.delete('q');
+
+    url.searchParams.set('mode', searchMode);
+    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
+  }
+
+  async function runDataSearch(searchQuery: string, searchMode: SearchMode) {
     setStatus('Meklējam cenas…');
     setNotice('');
 
@@ -71,12 +136,18 @@ export default function SearchExperience() {
     }
   }
 
-  async function submit(e?: FormEvent, override?: string) {
+  async function submit(e?: FormEvent, override?: string, forcedMode?: SearchMode) {
     e?.preventDefault();
+
+    const activeMode = forcedMode ?? mode;
     const input = (override ?? query).trim();
     if (!input || loading) return;
 
     if (override) setQuery(override);
+    if (forcedMode) setMode(forcedMode);
+
+    updateSearchUrl(input, activeMode);
+
     setLoading(true);
     setError('');
     setNotice('');
@@ -84,15 +155,18 @@ export default function SearchExperience() {
     setPlan(null);
 
     try {
-      if (mode === 'assistant') {
+      if (activeMode === 'assistant') {
         setStatus('Ceniq AI saprot tavas prasības…');
+
         const ai = await fetch('/api/ai', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ prompt: input }),
         });
+
         const aiData = await ai.json();
         if (!ai.ok) throw new Error(aiData.error || 'Ceniq AI neizdevās.');
+
         setPlan(aiData.plan);
         await runDataSearch(aiData.plan.searchQuery, 'assistant');
       } else {
@@ -205,13 +279,7 @@ export default function SearchExperience() {
         </div>
         <div className="categorygrid">
           {categories.map(([icon, label, q]) => (
-            <button
-              key={label}
-              onClick={() => {
-                setMode('search');
-                submit(undefined, q);
-              }}
-            >
+            <button key={label} onClick={() => submit(undefined, q, 'search')}>
               <span>{icon}</span>
               <b>{label}</b>
               <i>→</i>
