@@ -86,7 +86,7 @@ export default function Home() {
               <h3>{p.title}</h3>
               <div className="price">€{p.bestPrice.toFixed(0)}</div>
               <div className="muted">Best current offer · deal score {p.dealScore}</div>
-              <button className="view">View offers</button>
+              <a className="view" href={p.id === 'demo1' ? 'https://sovrn.co/jjbuquk' : '#'} target="_blank" rel="noreferrer">{p.id === 'demo1' ? 'View deal' : 'View offers'}</a>
             </article>
           ))}
         </div>
