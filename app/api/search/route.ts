@@ -385,16 +385,15 @@ export async function GET(request: Request) {
       const json = await getTask(taskId, auth);
       const task = json?.tasks?.[0];
 
-      if (!task) {
-        return NextResponse.json({
-          pending: true,
-          taskId,
-          results: [],
-          statusCode: null,
-          statusMessage:
-            'Task not available yet.',
-        });
-      }
+if (!task) {
+  return NextResponse.json({
+    pending: true,
+    taskId,
+    results: [],
+    statusCode: 40602,
+    statusMessage: 'Task In Queue.',
+  });
+}
 
       const statusCode =
         task.status_code ?? null;
