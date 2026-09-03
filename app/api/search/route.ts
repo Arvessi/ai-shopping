@@ -12,6 +12,7 @@ import {
 import { isRestrictedShoppingQuery } from '@/lib/safety';
 import type { ProductResult } from '@/lib/types';
 import { searchCatalog } from '@/lib/catalog';
+import { crawlQueryCandidates, ensureCrawlerRegistry } from '@/lib/crawler';
 
 export const maxDuration = 60;
 
@@ -178,18 +179,33 @@ export async function POST(
           () => undefined,
         );
 
-      // CENIQ 3.0: our own structured catalog is always the first source.
-      const catalogResults =
+      // CENIQ 3.1: structured catalog first. If coverage is weak, try queued public store pages
+      // from different merchants before falling back to paid DataForSEO.
+      await ensureCrawlerRegistry();
+
+      let catalogResults =
         await searchCatalog(q);
 
-      if (
-        catalogResults.length
-      ) {
+      const bestCoverage = Math.max(
+        0,
+        ...catalogResults.map((item) => item.storesCount || 0),
+      );
+
+      if (!catalogResults.length || bestCoverage < 3) {
+        const crawl = await crawlQueryCandidates(q, 8).catch(() => ({
+          pages: 0,
+          products: 0,
+        }));
+
+        if (crawl.products > 0) {
+          catalogResults = await searchCatalog(q);
+        }
+      }
+
+      if (catalogResults.length) {
         return NextResponse.json({
-          results:
-            catalogResults,
-          source:
-            'ceniq-catalog',
+          results: catalogResults,
+          source: 'ceniq-catalog',
           cached: true,
         });
       }

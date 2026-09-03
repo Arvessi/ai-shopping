@@ -173,7 +173,8 @@ model Merchant {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   feeds       FeedSource[]
-  offers      CatalogOffer[]
+  offers       CatalogOffer[]
+  crawlSources CrawlSource[]
 
   @@index([active])
 }
@@ -194,6 +195,7 @@ model FeedSource {
   updatedAt      DateTime @updatedAt
   offers         CatalogOffer[]
   runs           ImportRun[]
+  crawler        CrawlSource?
 
   @@index([merchantId, active])
 }
@@ -300,4 +302,53 @@ model ImportRun {
   finishedAt    DateTime?
 
   @@index([sourceId, startedAt])
+}
+
+
+model CrawlSource {
+  id               String      @id @default(cuid())
+  slug             String      @unique
+  merchantId       String
+  merchant         Merchant    @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  feedSourceId     String      @unique
+  feedSource       FeedSource  @relation(fields: [feedSourceId], references: [id], onDelete: Cascade)
+  origin           String
+  active           Boolean     @default(true)
+  priority         Int         @default(50)
+  crawlDelayMs     Int         @default(1000)
+  robotsAllowed    Boolean?
+  robotsCheckedAt  DateTime?
+  lastSeededAt     DateTime?
+  lastRunAt        DateTime?
+  lastError        String?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+  pages            CrawlPage[]
+
+  @@index([active, priority])
+  @@index([lastSeededAt])
+  @@index([lastRunAt])
+}
+
+model CrawlPage {
+  id             String      @id @default(cuid())
+  sourceId       String
+  source         CrawlSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  url            String
+  urlHash        String
+  kind           String      @default("candidate")
+  status         String      @default("pending")
+  priority       Int         @default(0)
+  depth          Int         @default(0)
+  attempts       Int         @default(0)
+  lastHttpStatus Int?
+  lastError      String?
+  lastCrawledAt  DateTime?
+  nextCrawlAt    DateTime?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  @@unique([sourceId, urlHash])
+  @@index([sourceId, status, priority])
+  @@index([status, nextCrawlAt])
 }
