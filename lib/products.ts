@@ -1,5 +1,14 @@
 import { databaseConfigured, prisma } from './db';
-import type { OfferView, ProductResult } from './types';
+import type {
+  OfferView,
+  ProductResult,
+  VariantAttributes,
+} from './types';
+
+function variantJson(value?: VariantAttributes) {
+  if (!value) return undefined;
+  return JSON.parse(JSON.stringify(value));
+}
 
 export async function persistProducts(products: ProductResult[]) {
   if (!databaseConfigured()) return products;
@@ -27,15 +36,15 @@ export async function persistProducts(products: ProductResult[]) {
           lastSyncedAt: new Date(),
         },
         update: {
-          sourceProductId: product.sourceProductId,
-          gid: product.gid,
-          dataDocId: product.dataDocId,
+          sourceProductId: product.sourceProductId || undefined,
+          gid: product.gid || undefined,
+          dataDocId: product.dataDocId || undefined,
           title: product.title,
           normalizedTitle: product.normalizedTitle,
           brand: product.brand,
           category: product.category,
           description: product.description,
-          image: product.image,
+          image: product.image || undefined,
           currency: product.currency,
           currentBestPrice: product.bestPrice,
           dealScore: product.dealScore,
@@ -54,6 +63,7 @@ export async function persistProducts(products: ProductResult[]) {
             merchant: offer.merchant,
             merchantDomain: offer.merchantDomain,
             variantLabel: offer.variantLabel,
+            variantData: variantJson(offer.variantData),
             price: offer.price,
             shipping: offer.shipping,
             shippingKnown: Boolean(offer.shippingKnown),
@@ -99,6 +109,8 @@ export async function persistProducts(products: ProductResult[]) {
           merchant: offer.merchant,
           merchantDomain: offer.merchantDomain || undefined,
           variantLabel: offer.variantLabel || undefined,
+          variantData:
+            (offer.variantData as VariantAttributes | null) || undefined,
           price: offer.price,
           shipping: offer.shipping,
           shippingKnown: offer.shippingKnown,
@@ -132,9 +144,13 @@ export async function replaceOffers(
     ? Math.min(...offers.map((offer) => offer.totalPrice))
     : undefined;
 
-  const productScore = offers.length
-    ? Math.max(...offers.map((offer) => offer.dealScore))
-    : 60;
+  const meaningfulScores = offers
+    .map((offer) => offer.dealScore)
+    .filter((score) => score > 0);
+
+  const productScore = meaningfulScores.length
+    ? Math.max(...meaningfulScores)
+    : 0;
 
   await prisma.$transaction([
     prisma.offer.deleteMany({ where: { productId } }),
@@ -146,6 +162,7 @@ export async function replaceOffers(
               merchant: offer.merchant,
               merchantDomain: offer.merchantDomain,
               variantLabel: offer.variantLabel,
+              variantData: variantJson(offer.variantData),
               price: offer.price,
               shipping: offer.shipping,
               shippingKnown: Boolean(offer.shippingKnown),
@@ -166,10 +183,9 @@ export async function replaceOffers(
       where: { id: productId },
       data: {
         currentBestPrice: bestPrice,
-        dealScore:
-          offers.find((offer) => offer.isBestOverall)?.dealScore ||
-          productScore,
+        dealScore: productScore,
         lastSyncedAt: new Date(),
+        lastEnrichedAt: new Date(),
       },
     }),
     ...(bestPrice !== undefined

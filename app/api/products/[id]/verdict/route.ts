@@ -3,25 +3,222 @@ import { prisma } from '@/lib/db';
 
 export const maxDuration = 30;
 
-type VerdictResponse = {
+type Verdict = {
   verdict:
     | 'Pērc tagad'
     | 'Pagaidi'
     | 'Salīdzini vēl';
   summary: string;
   reasons: string[];
-  confidence: 'zema' | 'vidēja' | 'augsta';
+  confidence:
+    | 'zema'
+    | 'vidēja'
+    | 'augsta';
 };
 
-function extractOutputText(json: any) {
-  return json?.output
-    ?.flatMap(
-      (item: any) => item?.content || [],
+function localVerdict(product: any): Verdict {
+  const offers = product.offers || [];
+
+  const stores = new Set(
+    offers.map(
+      (offer: any) =>
+        offer.merchantDomain ||
+        offer.merchant,
+    ),
+  ).size;
+
+  const prices = (product.snapshots || [])
+    .map((snapshot: any) =>
+      Number(snapshot.price),
     )
-    ?.find(
-      (content: any) =>
-        content?.type === 'output_text',
-    )?.text;
+    .filter(
+      (price: number) =>
+        Number.isFinite(price) &&
+        price > 0,
+    );
+
+  const current =
+    Number(product.currentBestPrice) ||
+    prices[prices.length - 1] ||
+    0;
+
+  if (stores < 2) {
+    return {
+      verdict: 'Salīdzini vēl',
+      summary:
+        'CENIQ pagaidām redz pārāk maz veikalu, lai godīgi pateiktu “pērc tagad”.',
+      reasons: [
+        `Atrasts ${stores || 0} veikals.`,
+        prices.length >= 2
+          ? 'Cenu vēsture ir sākta, bet veikalu salīdzinājums vēl ir vājš.'
+          : 'Vēl nav pietiekamas cenu vēstures.',
+      ],
+      confidence: 'zema',
+    };
+  }
+
+  if (prices.length >= 3) {
+    const min = Math.min(...prices);
+    const first = prices[0];
+    const latest = prices[prices.length - 1];
+
+    const nearLow =
+      current <= min * 1.03;
+
+    const trend =
+      first > 0
+        ? (latest - first) / first
+        : 0;
+
+    if (nearLow) {
+      return {
+        verdict: 'Pērc tagad',
+        summary:
+          'Pašreizējā cena ir tuvu CENIQ fiksētajam minimumam un ir vairāki veikali salīdzināšanai.',
+        reasons: [
+          `Salīdzināti ${stores} veikali.`,
+          `Pašreizējā cena ir tuvu fiksētajam minimumam ${min.toFixed(2)} €.`,
+        ],
+        confidence:
+          stores >= 3
+            ? 'augsta'
+            : 'vidēja',
+      };
+    }
+
+    if (trend < -0.04) {
+      return {
+        verdict: 'Pagaidi',
+        summary:
+          'Cena pēdējos CENIQ novērojumos ir kritusies, tāpēc ir pamats vēl nedaudz pagaidīt.',
+        reasons: [
+          `Cena kopš pirmā novērojuma mainījusies par ${(trend * 100).toFixed(1)}%.`,
+          `Salīdzināti ${stores} veikali.`,
+        ],
+        confidence: 'vidēja',
+      };
+    }
+  }
+
+  return {
+    verdict: 'Salīdzini vēl',
+    summary:
+      'Cena nav acīmredzami slikta, bet CENIQ vēl neredz pietiekami spēcīgu signālu.',
+    reasons: [
+      `Salīdzināti ${stores} veikali.`,
+      prices.length >= 3
+        ? 'Ir cenu vēsture, bet nav izteikta minimuma vai tendences.'
+        : 'Cenu vēsture vēl ir īsa.',
+    ],
+    confidence:
+      stores >= 3
+        ? 'vidēja'
+        : 'zema',
+  };
+}
+
+async function geminiVerdict(
+  product: any,
+  fallback: Verdict,
+): Promise<Verdict | null> {
+  const apiKey =
+    process.env.GEMINI_API_KEY;
+
+  if (!apiKey) return null;
+
+  const model =
+    process.env.GEMINI_MODEL ||
+    'gemini-2.5-flash';
+
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+      model,
+    )}:generateContent?key=${encodeURIComponent(
+      apiKey,
+    )}`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type':
+          'application/json',
+      },
+      body: JSON.stringify({
+        system_instruction: {
+          parts: [
+            {
+              text:
+                'Tu esi CENIQ iepirkšanās analītiķis Latvijā. Atbildi latviski, īsi un tikai no dotajiem datiem. Neizdomā piegādi, noliktavas atlikumu, reputāciju vai cenu vēsturi. Ja salīdzināts tikai viens veikals, izvēlies “Salīdzini vēl” un zemu pārliecību.',
+            },
+          ],
+        },
+        contents: [
+          {
+            parts: [
+              {
+                text: JSON.stringify({
+                  product: {
+                    title: product.title,
+                    brand: product.brand,
+                    currentBestPrice:
+                      product.currentBestPrice,
+                    currency:
+                      product.currency,
+                  },
+                  offers: product.offers.map(
+                    (offer: any) => ({
+                      merchant:
+                        offer.merchant,
+                      variant:
+                        offer.variantLabel,
+                      price: offer.price,
+                      totalPrice:
+                        offer.totalPrice,
+                      sellerRating:
+                        offer.sellerRating,
+                      deliveryMessage:
+                        offer.deliveryMessage,
+                      ceniqScore:
+                        offer.dealScore ||
+                        null,
+                    }),
+                  ),
+                  priceHistory:
+                    product.snapshots,
+                  deterministicCeniqCheck:
+                    fallback,
+                }),
+              },
+            ],
+          },
+        ],
+        generationConfig: {
+          responseMimeType:
+            'application/json',
+          temperature: 0.2,
+          maxOutputTokens: 350,
+        },
+      }),
+      cache: 'no-store',
+    },
+  );
+
+  const json =
+    await response.json();
+
+  if (!response.ok) return null;
+
+  const text =
+    json?.candidates?.[0]
+      ?.content?.parts?.[0]
+      ?.text;
+
+  if (!text) return null;
+
+  try {
+    return JSON.parse(text) as Verdict;
+  } catch {
+    return null;
+  }
 }
 
 export async function POST(
@@ -31,18 +228,18 @@ export async function POST(
   },
 ) {
   try {
-    const { id } = await context.params;
+    const { id } =
+      await context.params;
 
     const product =
       await prisma.product.findUnique({
         where: { id },
         include: {
           offers: {
-            orderBy: [
-              { isBestOverall: 'desc' },
-              { totalPrice: 'asc' },
-            ],
-            take: 8,
+            orderBy: {
+              totalPrice: 'asc',
+            },
+            take: 20,
           },
           snapshots: {
             orderBy: {
@@ -55,200 +252,36 @@ export async function POST(
 
     if (!product) {
       return NextResponse.json(
-        { error: 'Produkts nav atrasts.' },
+        {
+          error:
+            'Produkts nav atrasts.',
+        },
         { status: 404 },
       );
     }
 
-    const apiKey =
-      process.env.OPENAI_API_KEY;
+    const fallback =
+      localVerdict(product);
 
-    if (!apiKey) {
-      return NextResponse.json(
-        {
-          error:
-            'CENIQ AI vēl nav aktivizēts. Vercel jāpievieno OPENAI_API_KEY.',
-        },
-        { status: 503 },
-      );
-    }
+    const ai =
+      await geminiVerdict(
+        product,
+        fallback,
+      ).catch(() => null);
 
-    const prices = product.snapshots
-      .map((snapshot) => snapshot.price)
-      .filter(
-        (price) =>
-          Number.isFinite(price) &&
-          price > 0,
-      );
-
-    const firstPrice = prices[0];
-    const latestPrice =
-      prices[prices.length - 1];
-
-    const trendPercent =
-      firstPrice && latestPrice
-        ? ((latestPrice - firstPrice) /
-            firstPrice) *
-          100
-        : null;
-
-    const priceHistory =
-      prices.length > 1
-        ? {
-            samples: prices.length,
-            min: Math.min(...prices),
-            max: Math.max(...prices),
-            first: firstPrice,
-            latest: latestPrice,
-            trendPercent:
-              trendPercent == null
-                ? null
-                : Number(
-                    trendPercent.toFixed(2),
-                  ),
-          }
-        : null;
-
-    const offers = product.offers.map(
-      (offer) => ({
-        merchant: offer.merchant,
-        variant: offer.variantLabel,
-        price: offer.price,
-        shipping: offer.shippingKnown
-          ? offer.shipping
-          : null,
-        shippingKnown:
-          offer.shippingKnown,
-        deliveryMessage:
-          offer.deliveryMessage,
-        totalPrice: offer.totalPrice,
-        sellerRating:
-          offer.sellerRating,
-        sellerVotes: offer.sellerVotes,
-        isCheapest: offer.isCheapest,
-        isBestOverall:
-          offer.isBestOverall,
-      }),
-    );
-
-    const input = JSON.stringify({
-      product: {
-        title: product.title,
-        brand: product.brand,
-        currentBestPrice:
-          product.currentBestPrice,
-        currency: product.currency,
-        ceniqOfferScore:
-          product.dealScore,
-      },
-      offers,
-      priceHistory,
+    return NextResponse.json({
+      verdict: ai || fallback,
+      provider: ai
+        ? 'gemini'
+        : 'ceniq-rules',
     });
-
-    const response = await fetch(
-      'https://api.openai.com/v1/responses',
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type':
-            'application/json',
-        },
-        body: JSON.stringify({
-          model:
-            process.env
-              .OPENAI_VERDICT_MODEL ||
-            'gpt-5.6-luna',
-          reasoning: { effort: 'low' },
-          instructions:
-            'Tu esi CENIQ AI iepirkšanās analītiķis Latvijā. Atbildi latviski un ļoti īsi. Izvērtē tikai dotos datus. Neizdomā piegādes cenu, noliktavas atlikumu, veikala reputāciju vai cenu vēsturi. Ja ir tikai viens veikals, nav cenu vēstures vai trūkst būtisku signālu, pazemini confidence un biežāk izvēlies “Salīdzini vēl”. “Pērc tagad” izmanto tikai tad, ja dotie dati to tiešām pamato. CENIQ score ir piedāvājuma signāls, nevis produkta kvalitātes vērtējums.',
-          input,
-          text: {
-            format: {
-              type: 'json_schema',
-              name: 'ceniq_product_verdict',
-              strict: true,
-              schema: {
-                type: 'object',
-                properties: {
-                  verdict: {
-                    type: 'string',
-                    enum: [
-                      'Pērc tagad',
-                      'Pagaidi',
-                      'Salīdzini vēl',
-                    ],
-                  },
-                  summary: {
-                    type: 'string',
-                  },
-                  reasons: {
-                    type: 'array',
-                    items: {
-                      type: 'string',
-                    },
-                  },
-                  confidence: {
-                    type: 'string',
-                    enum: [
-                      'zema',
-                      'vidēja',
-                      'augsta',
-                    ],
-                  },
-                },
-                required: [
-                  'verdict',
-                  'summary',
-                  'reasons',
-                  'confidence',
-                ],
-                additionalProperties: false,
-              },
-            },
-          },
-          max_output_tokens: 350,
-        }),
-        cache: 'no-store',
-      },
-    );
-
-    const json = await response.json();
-
-    if (!response.ok) {
-      throw new Error(
-        json?.error?.message ||
-          'OpenAI pieprasījums neizdevās.',
-      );
-    }
-
-    const outputText =
-      extractOutputText(json);
-
-    if (!outputText) {
-      throw new Error(
-        'CENIQ AI neatgrieza viedokli.',
-      );
-    }
-
-    const verdict =
-      JSON.parse(
-        outputText,
-      ) as VerdictResponse;
-
-    return NextResponse.json({ verdict });
   } catch (error) {
-    console.error(
-      'CENIQ product verdict:',
-      error,
-    );
-
     return NextResponse.json(
       {
         error:
           error instanceof Error
             ? error.message
-            : 'CENIQ AI analīze neizdevās.',
+            : 'CENIQ analīze neizdevās.',
       },
       { status: 502 },
     );

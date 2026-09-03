@@ -1,11 +1,12 @@
 'use client';
 
 import Link from 'next/link';
-import { useState, type MouseEvent } from 'react';
-import type {
-  OfferView,
-  ProductResult,
-} from '@/lib/types';
+import {
+  useEffect,
+  useState,
+  type MouseEvent,
+} from 'react';
+import type { ProductResult } from '@/lib/types';
 
 function money(value: number, currency = 'EUR') {
   try {
@@ -18,59 +19,6 @@ function money(value: number, currency = 'EUR') {
   }
 }
 
-function shippingText(offer?: OfferView) {
-  if (!offer) return 'Nav datu';
-
-  if (offer.shippingKnown) {
-    if (offer.shipping > 0) {
-      return money(offer.shipping, offer.currency);
-    }
-
-    if (
-      /free|bezmaksas/i.test(
-        offer.deliveryMessage || '',
-      )
-    ) {
-      return 'Bezmaksas';
-    }
-
-    if (offer.shipping === 0) {
-      return '€0';
-    }
-  }
-
-  if (offer.deliveryMessage) {
-    return offer.deliveryMessage;
-  }
-
-  return 'Nav datu';
-}
-
-function confidence(product: ProductResult) {
-  const signalCount = product.offers.filter(
-    (offer) =>
-      offer.sellerRating != null ||
-      offer.shippingKnown ||
-      offer.deliveryMessage,
-  ).length;
-
-  if (
-    (product.storesCount || product.offers.length) >= 3 &&
-    signalCount >= 2
-  ) {
-    return 'augsta';
-  }
-
-  if (
-    (product.storesCount || product.offers.length) >= 2 ||
-    signalCount >= 1
-  ) {
-    return 'vidēja';
-  }
-
-  return 'zema';
-}
-
 export default function ProductCard({
   product,
 }: {
@@ -79,40 +27,50 @@ export default function ProductCard({
 }) {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [image, setImage] = useState(product.image || '');
 
   const storeCount =
     product.storesCount ||
     new Set(
       product.offers.map(
-        (offer) =>
-          offer.merchantDomain || offer.merchant,
+        (offer) => offer.merchantDomain || offer.merchant,
       ),
     ).size;
 
-  const hasComparison = storeCount > 1;
+  useEffect(() => {
+    setImage(product.image || '');
 
-  const best =
-    product.offers.find(
-      (offer) => offer.isBestOverall,
-    ) ||
-    product.offers.find(
-      (offer) => offer.isCheapest,
-    ) ||
-    product.offers[0];
+    if (
+      product.image ||
+      !product.id ||
+      product.id.startsWith('family:')
+    ) {
+      return;
+    }
 
-  const scoreConfidence = confidence(product);
+    let active = true;
+
+    fetch(
+      `/api/products/${encodeURIComponent(product.id)}/image`,
+    )
+      .then((response) => response.json())
+      .then((data) => {
+        if (active && data.image) {
+          setImage(data.image);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      active = false;
+    };
+  }, [product.id, product.image]);
 
   async function save(e: MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
 
-    if (
-      !product.id ||
-      product.id.startsWith('pid:') ||
-      product.id.startsWith('gid:') ||
-      product.id.startsWith('title:') ||
-      product.id.startsWith('model:')
-    ) {
+    if (!product.id || product.id.startsWith('family:')) {
       window.location.href = '/login';
       return;
     }
@@ -121,12 +79,8 @@ export default function ProductCard({
 
     const response = await fetch('/api/wishlist', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        productId: product.id,
-      }),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ productId: product.id }),
     });
 
     if (response.status === 401) {
@@ -138,16 +92,13 @@ export default function ProductCard({
     setSaving(false);
   }
 
-  const href = `/product/${encodeURIComponent(
-    product.id,
-  )}`;
-
   return (
-    <Link href={href} className="productcard">
+    <Link
+      href={`/product/${encodeURIComponent(product.id)}`}
+      className="productcard productcard-v21"
+    >
       <button
-        className={`heart ${
-          saved ? 'saved' : ''
-        }`}
+        className={`heart ${saved ? 'saved' : ''}`}
         onClick={save}
         disabled={saving}
         aria-label="Saglabāt izlasē"
@@ -156,27 +107,25 @@ export default function ProductCard({
       </button>
 
       <div className="productimage">
-        {product.image ? (
+        {image ? (
           <img
-            src={product.image}
+            src={image}
             alt={product.title}
             loading="lazy"
           />
         ) : (
-          <div className="imagefallback">C</div>
+          <div className="imagefallback imagefallback-soft">
+            <span>C</span>
+            <small>Bilde tiek meklēta</small>
+          </div>
         )}
       </div>
 
       <div className="productbody">
         <div className="productmeta">
+          <span>{product.brand || 'Produkts'}</span>
           <span>
-            {product.brand || 'Produkts'}
-          </span>
-          <span>
-            {storeCount}{' '}
-            {storeCount === 1
-              ? 'veikals'
-              : 'veikali'}
+            {storeCount} {storeCount === 1 ? 'veikals' : 'veikali'}
           </span>
         </div>
 
@@ -184,18 +133,11 @@ export default function ProductCard({
 
         {!!product.variants?.length && (
           <div className="variantchips">
-            {product.variants
-              .slice(0, 4)
-              .map((variant) => (
-                <span key={variant}>
-                  {variant}
-                </span>
-              ))}
-
-            {product.variants.length > 4 && (
-              <span>
-                +{product.variants.length - 4}
-              </span>
+            {product.variants.slice(0, 3).map((variant) => (
+              <span key={variant}>{variant}</span>
+            ))}
+            {product.variants.length > 3 && (
+              <span>+{product.variants.length - 3}</span>
             )}
           </div>
         )}
@@ -204,72 +146,35 @@ export default function ProductCard({
           <div>
             <small>no</small>
             <strong>
-              {money(
-                product.bestPrice,
-                product.currency,
-              )}
+              {money(product.bestPrice, product.currency)}
             </strong>
           </div>
 
-          <div
-            className={`score score-${scoreConfidence}`}
-            title={`CENIQ datu pārliecība: ${scoreConfidence}`}
-          >
-            <b>{product.dealScore}</b>
-            <span>/100</span>
-          </div>
+          {product.dealScore > 0 && storeCount >= 2 ? (
+            <div className="score score-valid">
+              <b>{product.dealScore}</b>
+              <span>/100</span>
+            </div>
+          ) : (
+            <div className="score score-pending">
+              <b>—</b>
+            </div>
+          )}
         </div>
 
         <div className="scorelabel">
-          CENIQ vērtējums · {scoreConfidence}{' '}
-          pārliecība
+          {product.dealScore > 0 && storeCount >= 2
+            ? 'CENIQ cenas vērtējums'
+            : 'Vērtējums pēc vairāku veikalu salīdzināšanas'}
         </div>
 
-        <div className="cardexpand">
-          <div>
-            <span>
-              {hasComparison
-                ? 'CENIQ izvēle'
-                : 'Atrasts veikals'}
-            </span>
-            <b>
-              {best?.merchant ||
-                'Veikals nav zināms'}
-            </b>
-          </div>
-
-          {best?.variantLabel && (
-            <div>
-              <span>Variants</span>
-              <b>{best.variantLabel}</b>
-            </div>
-          )}
-
-          <div>
-            <span>Piegāde</span>
-            <b>{shippingText(best)}</b>
-          </div>
-
-          <div>
-            <span>Kopā*</span>
-            <b>
-              {best
-                ? money(
-                    best.totalPrice,
-                    best.currency,
-                  )
-                : money(
-                    product.bestPrice,
-                    product.currency,
-                  )}
-            </b>
-          </div>
-
-          <span className="comparecta">
-            {hasComparison
-              ? 'Salīdzināt veikalus →'
-              : 'Skatīt piedāvājumu →'}
+        <div className="cardquick">
+          <span>
+            {storeCount >= 2
+              ? `${storeCount} veikali salīdzināti`
+              : 'Atver, lai CENIQ sameklē vēl veikalus'}
           </span>
+          <b>Skatīt →</b>
         </div>
       </div>
     </Link>

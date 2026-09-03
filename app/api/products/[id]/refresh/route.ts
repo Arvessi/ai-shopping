@@ -1,16 +1,22 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import {
+  createProductsTask,
   createSellersTask,
+  getProductsTask,
   getSellersTask,
   mapFastProductSearch,
   mapSellerOffers,
   searchProductsFast,
+  selectMerchantProductCandidate,
   taskPending,
 } from '@/lib/dataforseo';
 import { replaceOffers } from '@/lib/products';
 
-async function refreshViaLiveSearch(product: {
+const ENRICH_TTL_MS =
+  12 * 60 * 60 * 1000;
+
+async function liveFallback(product: {
   id: string;
   title: string;
   normalizedTitle: string;
@@ -19,20 +25,18 @@ async function refreshViaLiveSearch(product: {
     product.title,
     true,
   );
-  let mapped = mapFastProductSearch(raw);
+
+  let mapped =
+    mapFastProductSearch(raw);
 
   if (!mapped.length) {
     raw = await searchProductsFast(
       product.title,
       false,
     );
-    mapped = mapFastProductSearch(raw);
-  }
 
-  if (!mapped.length) {
-    throw new Error(
-      'Neizdevās atrast svaigus piedāvājumus šim produktam.',
-    );
+    mapped =
+      mapFastProductSearch(raw);
   }
 
   const candidate =
@@ -43,9 +47,14 @@ async function refreshViaLiveSearch(product: {
     ) || mapped[0];
 
   if (!candidate?.offers.length) {
-    throw new Error(
-      'Svaigi veikalu piedāvājumi netika atrasti.',
-    );
+    await prisma.product.update({
+      where: { id: product.id },
+      data: {
+        lastEnrichedAt: new Date(),
+      },
+    });
+
+    return [];
   }
 
   await replaceOffers(
@@ -53,26 +62,55 @@ async function refreshViaLiveSearch(product: {
     candidate.offers,
   );
 
+  if (candidate.image) {
+    await prisma.product.update({
+      where: { id: product.id },
+      data: { image: candidate.image },
+    });
+  }
+
   return candidate.offers;
 }
 
 export async function POST(
-  _request: Request,
+  request: Request,
   context: {
     params: Promise<{ id: string }>;
   },
 ) {
-  const { id } = await context.params;
+  const { id } =
+    await context.params;
 
-  const product = await prisma.product.findUnique({
-    where: { id },
-  });
+  const force =
+    new URL(
+      request.url,
+    ).searchParams.get(
+      'force',
+    ) === '1';
+
+  const product =
+    await prisma.product.findUnique({
+      where: { id },
+    });
 
   if (!product) {
     return NextResponse.json(
       { error: 'Produkts nav atrasts.' },
       { status: 404 },
     );
+  }
+
+  if (
+    !force &&
+    product.lastEnrichedAt &&
+    Date.now() -
+      product.lastEnrichedAt.getTime() <
+      ENRICH_TTL_MS
+  ) {
+    return NextResponse.json({
+      pending: false,
+      cached: true,
+    });
   }
 
   try {
@@ -82,54 +120,62 @@ export async function POST(
         product.dataDocId,
     );
 
-    if (!hasIdentity) {
+    if (hasIdentity) {
+      try {
+        const task =
+          await createSellersTask({
+            productId:
+              product.sourceProductId ||
+              undefined,
+            gid:
+              product.gid ||
+              undefined,
+            dataDocId:
+              product.dataDocId ||
+              undefined,
+          });
+
+        return NextResponse.json({
+          pending: true,
+          stage: 'sellers',
+          ...task,
+        });
+      } catch {
+        // stale identity -> product lookup
+      }
+    }
+
+    const task =
+      await createProductsTask(
+        product.title,
+      );
+
+    return NextResponse.json({
+      pending: true,
+      stage: 'products',
+      ...task,
+    });
+  } catch (error) {
+    try {
       const offers =
-        await refreshViaLiveSearch(product);
+        await liveFallback(product);
 
       return NextResponse.json({
         pending: false,
-        mode: 'live-search',
+        stage: 'live-fallback',
         offers,
-      });
-    }
-
-    try {
-      const task = await createSellersTask({
-        productId:
-          product.sourceProductId ||
-          undefined,
-        gid: product.gid || undefined,
-        dataDocId:
-          product.dataDocId || undefined,
-      });
-
-      return NextResponse.json({
-        pending: true,
-        mode: 'merchant-sellers',
-        ...task,
       });
     } catch {
-      // Product IDs from SERP can occasionally stop working. Do not surface
-      // that technical detail to the user; fall back to a fresh live search.
-      const offers =
-        await refreshViaLiveSearch(product);
-
-      return NextResponse.json({
-        pending: false,
-        mode: 'live-search-fallback',
-        offers,
-      });
+      return NextResponse.json(
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : 'Neizdevās atjaunot piedāvājumus.',
+        },
+        { status: 502 },
+      );
     }
-  } catch (error) {
-    return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : 'Neizdevās atjaunot piedāvājumus.',
-      },
-      { status: 502 },
-    );
   }
 }
 
@@ -139,10 +185,21 @@ export async function GET(
     params: Promise<{ id: string }>;
   },
 ) {
-  const { id } = await context.params;
-  const taskId = new URL(
-    request.url,
-  ).searchParams.get('taskId');
+  const { id } =
+    await context.params;
+
+  const url =
+    new URL(request.url);
+
+  const taskId =
+    url.searchParams.get(
+      'taskId',
+    );
+
+  const stage =
+    url.searchParams.get(
+      'stage',
+    ) || 'sellers';
 
   if (!taskId) {
     return NextResponse.json(
@@ -151,35 +208,137 @@ export async function GET(
     );
   }
 
+  const product =
+    await prisma.product.findUnique({
+      where: { id },
+    });
+
+  if (!product) {
+    return NextResponse.json(
+      { error: 'Produkts nav atrasts.' },
+      { status: 404 },
+    );
+  }
+
   try {
-    const json = await getSellersTask(taskId);
+    if (stage === 'products') {
+      const json =
+        await getProductsTask(
+          taskId,
+        );
+
+      if (taskPending(json)) {
+        return NextResponse.json({
+          pending: true,
+          stage: 'products',
+          taskId,
+        });
+      }
+
+      const candidate =
+        selectMerchantProductCandidate(
+          json,
+          product.title,
+        );
+
+      if (!candidate) {
+        const offers =
+          await liveFallback(product);
+
+        return NextResponse.json({
+          pending: false,
+          stage: 'live-fallback',
+          offers,
+        });
+      }
+
+      await prisma.product.update({
+        where: { id },
+        data: {
+          sourceProductId:
+            candidate.productId,
+          gid: candidate.gid,
+          dataDocId:
+            candidate.dataDocId,
+          image:
+            candidate.image ||
+            product.image ||
+            undefined,
+        },
+      });
+
+      const sellers =
+        await createSellersTask({
+          productId:
+            candidate.productId,
+          gid: candidate.gid,
+          dataDocId:
+            candidate.dataDocId,
+        });
+
+      return NextResponse.json({
+        pending: true,
+        stage: 'sellers',
+        ...sellers,
+      });
+    }
+
+    const json =
+      await getSellersTask(
+        taskId,
+      );
 
     if (taskPending(json)) {
       return NextResponse.json({
         pending: true,
+        stage: 'sellers',
         taskId,
       });
     }
 
-    const offers = mapSellerOffers(json);
+    const offers =
+      mapSellerOffers(json);
 
     if (offers.length) {
-      await replaceOffers(id, offers);
+      await replaceOffers(
+        id,
+        offers,
+      );
+    } else {
+      await prisma.product.update({
+        where: { id },
+        data: {
+          lastEnrichedAt:
+            new Date(),
+        },
+      });
     }
 
     return NextResponse.json({
       pending: false,
+      stage: 'done',
       offers,
     });
   } catch (error) {
-    return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : 'Piedāvājumu atjaunošana neizdevās.',
-      },
-      { status: 502 },
-    );
+    try {
+      const offers =
+        await liveFallback(product);
+
+      return NextResponse.json({
+        pending: false,
+        stage: 'live-fallback',
+        offers,
+      });
+    } catch {
+      return NextResponse.json(
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : 'Piedāvājumu atjaunošana neizdevās.',
+        },
+        { status: 502 },
+      );
+    }
   }
 }

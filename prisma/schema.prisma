@@ -23,7 +23,7 @@ model User {
 model Product {
   id               String   @id @default(cuid())
   externalId       String   @unique
-  sourceProductId    String?
+  sourceProductId  String?
   gid              String?
   dataDocId        String?
   title            String
@@ -37,6 +37,7 @@ model Product {
   dealScore        Int      @default(50)
   source           String   @default("dataforseo")
   lastSyncedAt     DateTime @default(now())
+  lastEnrichedAt   DateTime?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
   offers           Offer[]
@@ -52,6 +53,7 @@ model Offer {
   merchant        String
   merchantDomain  String?
   variantLabel    String?
+  variantData     Json?
   price           Float
   shipping        Float    @default(0)
   shippingKnown   Boolean  @default(false)
@@ -74,11 +76,11 @@ model Offer {
 }
 
 model PriceSnapshot {
-  id        String   @id @default(cuid())
-  productId String
-  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
-  price     Float
-  currency  String   @default("EUR")
+  id         String   @id @default(cuid())
+  productId  String
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  price      Float
+  currency   String   @default("EUR")
   recordedAt DateTime @default(now())
 
   @@index([productId, recordedAt])
@@ -96,18 +98,18 @@ model Wishlist {
 }
 
 model PriceAlert {
-  id             String   @id @default(cuid())
-  userId         String
-  productId      String
-  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  product        Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
-  targetPrice    Float
-  emailEnabled   Boolean  @default(true)
-  browserEnabled Boolean  @default(true)
-  active         Boolean  @default(true)
+  id              String   @id @default(cuid())
+  userId          String
+  productId       String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product         Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  targetPrice     Float
+  emailEnabled    Boolean  @default(true)
+  browserEnabled  Boolean  @default(true)
+  active          Boolean  @default(true)
   lastTriggeredAt DateTime?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   @@index([active, productId])
 }

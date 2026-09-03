@@ -1,8 +1,18 @@
+export type VariantAttributes = {
+  color?: string;
+  storage?: string;
+  ram?: string;
+  connectivity?: string;
+  size?: string;
+  condition?: string;
+};
+
 export type OfferView = {
   id?: string;
   merchant: string;
   merchantDomain?: string;
   variantLabel?: string;
+  variantData?: VariantAttributes;
   price: number;
   shipping: number;
   shippingKnown?: boolean;
@@ -35,6 +45,7 @@ export type ProductResult = {
   offers: OfferView[];
   storesCount?: number;
   variants?: string[];
+  variantOptions?: Record<string, string[]>;
 };
 
 export type AiShoppingPlan = {

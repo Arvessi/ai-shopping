@@ -1,4 +1,8 @@
-import type { OfferView, ProductResult } from './types';
+import type {
+  OfferView,
+  ProductResult,
+  VariantAttributes,
+} from './types';
 
 const API_BASE = 'https://api.dataforseo.com/v3';
 
@@ -16,6 +20,7 @@ type PriceObject = {
   max_value?: number | null;
   currency?: string | null;
   displayed_price?: string | null;
+  is_price_range?: boolean | null;
 };
 
 type RawItem = {
@@ -32,6 +37,7 @@ type RawItem = {
   seller?: string;
   seller_name?: string;
   price?: number | PriceObject | null;
+  price_multiplier?: number | null;
   base_price?: number | null;
   tax?: number | null;
   shipping_price?: number | null;
@@ -44,6 +50,7 @@ type RawItem = {
   image_url?: string | null;
   product_images?: string[] | null;
   images?: Array<{ image_url?: string | null }> | null;
+  tags?: string[] | null;
   product_identifiers?: {
     product_id?: string | null;
     data_docid?: string | null;
@@ -71,37 +78,50 @@ type RawItem = {
     delivery_message?: string | null;
     delivery_price?: {
       current?: number | null;
+      regular?: number | null;
+      max_value?: number | null;
       currency?: string | null;
+      displayed_price?: string | null;
+      is_price_range?: boolean | null;
     } | null;
   } | null;
-  stores_count_info?: { count?: string | number | null } | null;
   items?: RawItem[];
 };
 
 const COLOR_VARIANTS: Array<[RegExp, string]> = [
-  [/\b(space black|black titanium|black|midnight|melns|melna)\b/i, 'Black'],
-  [/\b(desert titanium)\b/i, 'Desert Titanium'],
+  [/\b(space black|black titanium|obsidian|black|midnight|melns|melna)\b/i, 'Black'],
+  [/\b(desert titanium|desert)\b/i, 'Desert Titanium'],
   [/\b(natural titanium)\b/i, 'Natural Titanium'],
-  [/\b(white titanium|white|starlight|balts|balta)\b/i, 'White'],
-  [/\b(titanium gray|gray|grey|graphite|pelēks|pelēka)\b/i, 'Gray'],
-  [/\b(pink|rose|rozā)\b/i, 'Pink'],
-  [/\b(blue|ultramarine|zils|zila)\b/i, 'Blue'],
-  [/\b(green|zaļš|zaļa)\b/i, 'Green'],
-  [/\b(red|sarkans|sarkana)\b/i, 'Red'],
+  [/\b(white titanium|porcelain|white|starlight|balts|balta)\b/i, 'White'],
+  [/\b(titanium gray|space gray|gray|grey|graphite|pelēks|pelēka)\b/i, 'Gray'],
+  [/\b(pink|rose gold|rose|rozā)\b/i, 'Pink'],
+  [/\b(navy|blue titanium|blue|ultramarine|zils|zila)\b/i, 'Blue'],
+  [/\b(mint|green|zaļš|zaļa)\b/i, 'Green'],
+  [/\b(product red|red|sarkans|sarkana)\b/i, 'Red'],
   [/\b(yellow|dzeltens|dzeltena)\b/i, 'Yellow'],
   [/\b(purple|violet|violets|violeta)\b/i, 'Purple'],
   [/\b(gold|zelta)\b/i, 'Gold'],
   [/\b(silver|sudraba)\b/i, 'Silver'],
 ];
 
+const KNOWN_BRANDS = [
+  'Apple', 'Samsung', 'Google', 'Xiaomi', 'Huawei', 'Honor', 'OnePlus',
+  'Nothing', 'Sony', 'LG', 'Philips', 'Panasonic', 'Lenovo', 'Asus',
+  'Acer', 'Dell', 'HP', 'MSI', 'Microsoft', 'JBL', 'Bose', 'Marshall',
+  'Logitech', 'Razer', 'Corsair', 'SteelSeries', 'Canon', 'Nikon',
+  'Fujifilm', 'GoPro', 'DJI', 'Garmin', 'Bosch', 'Dyson', 'Roborock',
+];
+
+const INSTALLMENT_PATTERN =
+  /(?:\/\s*mēn|mēnesī|mēnesim|mēneš|\/\s*mo\b|per\s+month|monthly|month\b|nomaks|līzing|leasing|installment|instalment|abonē|subscription|pirm[aā]\s+iemaksa|first\s+payment|down\s+payment|deposit|tarifs?|plan\s+from|\b\d+\s*[x×]\s*€|\b\d+\s*mēn)/i;
+
+const SECONDARY_CONDITION_PATTERN =
+  /\b(used|refurbished|renewed|reconditioned|open[\s-]?box|demo|lietots|lietota|atjaunots|atjaunota|mazlietots|vitrīnas)\b/i;
+
 function authHeader() {
   const login = process.env.DATAFORSEO_LOGIN;
   const password = process.env.DATAFORSEO_PASSWORD;
-
-  if (!login || !password) {
-    throw new Error('DataForSEO credentials are not configured.');
-  }
-
+  if (!login || !password) throw new Error('DataForSEO credentials are not configured.');
   return `Basic ${Buffer.from(`${login}:${password}`).toString('base64')}`;
 }
 
@@ -119,20 +139,11 @@ async function request(path: string, init?: RequestInit) {
   const json = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    throw new Error(
-      json?.status_message ||
-        `DataForSEO request failed (${response.status}).`,
-    );
+    throw new Error(json?.status_message || `DataForSEO request failed (${response.status}).`);
   }
 
-  if (
-    typeof json?.status_code === 'number' &&
-    json.status_code >= 40000
-  ) {
-    throw new Error(
-      json?.status_message ||
-        `DataForSEO request failed (${json.status_code}).`,
-    );
+  if (typeof json?.status_code === 'number' && json.status_code >= 40000) {
+    throw new Error(json?.status_message || `DataForSEO request failed (${json.status_code}).`);
   }
 
   return json as Json;
@@ -145,19 +156,7 @@ function locationTask() {
   };
 }
 
-/**
- * User-facing search.
- *
- * Keep depth at 10: DataForSEO bills Organic SERP in result-page chunks and
- * depth above the default can increase cost. We first ask for Google's
- * Shopping surface because it is more likely to include product images and
- * structured seller/price data. The API route falls back to ordinary search
- * only when Shopping returns no usable products.
- */
-export async function searchProductsFast(
-  keyword: string,
-  useShoppingMarkup = true,
-) {
+export async function searchProductsFast(keyword: string, useShoppingMarkup = true) {
   const task: Record<string, unknown> = {
     ...locationTask(),
     keyword,
@@ -166,14 +165,37 @@ export async function searchProductsFast(
     depth: 10,
   };
 
-  if (useShoppingMarkup) {
-    task.search_param = '&udm=28';
-  }
+  if (useShoppingMarkup) task.search_param = '&udm=28';
 
   return request('/serp/google/organic/live/advanced', {
     method: 'POST',
     body: JSON.stringify([task]),
   });
+}
+
+export async function createProductsTask(keyword: string) {
+  const json = await request('/merchant/google/products/task_post', {
+    method: 'POST',
+    body: JSON.stringify([{
+      ...locationTask(),
+      keyword,
+      priority: 1,
+      depth: 20,
+    }]),
+  });
+
+  const task = json?.tasks?.[0];
+  if (!task?.id) throw new Error(task?.status_message || 'DataForSEO did not create a products task.');
+
+  return {
+    taskId: String(task.id),
+    statusCode: task.status_code,
+    statusMessage: task.status_message,
+  };
+}
+
+export async function getProductsTask(taskId: string) {
+  return request(`/merchant/google/products/task_get/advanced/${encodeURIComponent(taskId)}`);
 }
 
 export async function createSellersTask(ids: {
@@ -189,29 +211,20 @@ export async function createSellersTask(ids: {
         ? { data_docid: ids.dataDocId }
         : null;
 
-  if (!identity) {
-    throw new Error('Product has no DataForSEO identity for seller lookup.');
-  }
+  if (!identity) throw new Error('Product has no DataForSEO identity for seller lookup.');
 
   const json = await request('/merchant/google/sellers/task_post', {
     method: 'POST',
-    body: JSON.stringify([
-      {
-        ...locationTask(),
-        priority: 2,
-        ...identity,
-        depth: 10,
-      },
-    ]),
+    body: JSON.stringify([{
+      ...locationTask(),
+      priority: 1,
+      ...identity,
+      depth: 10,
+    }]),
   });
 
   const task = json?.tasks?.[0];
-
-  if (!task?.id) {
-    throw new Error(
-      task?.status_message || 'DataForSEO did not create a sellers task.',
-    );
-  }
+  if (!task?.id) throw new Error(task?.status_message || 'DataForSEO did not create a sellers task.');
 
   return {
     taskId: String(task.id),
@@ -221,9 +234,7 @@ export async function createSellersTask(ids: {
 }
 
 export async function getSellersTask(taskId: string) {
-  return request(
-    `/merchant/google/sellers/task_get/advanced/${encodeURIComponent(taskId)}`,
-  );
+  return request(`/merchant/google/sellers/task_get/advanced/${encodeURIComponent(taskId)}`);
 }
 
 function normalizeTitle(title: string) {
@@ -235,39 +246,201 @@ function normalizeTitle(title: string) {
 }
 
 function cleanProductTitle(title: string) {
-  const cleaned = title
+  return title
     .replace(/\s*[|–—]\s*.*$/i, '')
-    .replace(/\s+-\s+(telefoni|phones?|smartphones?|mobile phones?).*$/i, '')
-    .replace(/\b(cena\s+no|price\s+from)\s+\d+(?:[.,]\d+)?\s*€?.*$/i, '')
+    .replace(/\s+-\s+(telefoni|phones?|smartphones?|mobile phones?|portatīvie|laptops?).*$/i, '')
+    .replace(/\b(cena(?:\s+no)?|price(?:\s+from)?)\s+\d+(?:[.,]\d+)?\s*€?.*$/i, '')
     .replace(/[🏷️]+/g, '')
     .replace(/\s+/g, ' ')
     .trim();
-
-  return cleaned || title.trim();
 }
 
-export function canonicalizeProductTitle(title: string) {
-  let value = cleanProductTitle(title);
+function inferBrand(title: string) {
+  const lower = title.toLowerCase();
 
-  // Store/SKU suffixes frequently appear in parentheses, e.g. "(MYE73ZD/A)".
-  value = value.replace(/\s*\([^)]*[A-Z0-9]{5,}[A-Z0-9/.-]*[^)]*\)\s*$/i, '');
+  if (/\biphone\b|\bipad\b|\bmacbook\b|\bairpods\b|\bapple watch\b/i.test(title)) return 'Apple';
+  if (/\bgalaxy\b/i.test(title)) return 'Samsung';
+  if (/\bpixel\b/i.test(title)) return 'Google';
 
-  for (const [pattern] of COLOR_VARIANTS) {
-    value = value.replace(pattern, ' ');
+  const brand = KNOWN_BRANDS.find((candidate) => lower.includes(candidate.toLowerCase()));
+  if (brand) return brand;
+
+  const first = title.trim().split(/\s+/)[0] || '';
+  return first.length > 1 ? first.replace(/[,:;]+$/, '') : undefined;
+}
+
+function stripLeadingBrand(value: string) {
+  const brand = inferBrand(value);
+  if (!brand) return value;
+  const escaped = brand.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return value.replace(new RegExp(`^${escaped}\\s+`, 'i'), '').trim();
+}
+
+function extractStorage(title: string) {
+  const tb = title.match(/\b(\d+(?:\.\d+)?)\s*TB\b/i);
+  if (tb) return `${tb[1]}TB`;
+
+  const storage = Array.from(title.matchAll(/\b(\d{2,4})\s*GB\b/gi))
+    .map((match) => Number(match[1]))
+    .filter((value) => value >= 64)
+    .sort((a, b) => b - a)[0];
+
+  return storage ? `${storage}GB` : undefined;
+}
+
+function extractRam(title: string) {
+  const explicit = title.match(/\b(\d{1,3})\s*GB\s*(?:RAM|memory)\b/i);
+  if (explicit) return `${explicit[1]}GB`;
+
+  const values = Array.from(title.matchAll(/\b(\d{1,4})\s*GB\b/gi))
+    .map((match) => Number(match[1]));
+
+  if (values.length >= 2) {
+    const ram = values
+      .filter((value) => value > 0 && value < 64)
+      .sort((a, b) => b - a)[0];
+
+    if (ram) return `${ram}GB`;
   }
 
-  return value
-    .replace(/[,;]+$/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return undefined;
 }
 
-function extractVariantLabel(title: string) {
+function extractColor(title: string) {
   for (const [pattern, label] of COLOR_VARIANTS) {
     if (pattern.test(title)) return label;
   }
 
   return undefined;
+}
+
+function extractConnectivity(title: string) {
+  if (/\bwi[\s-]?fi\s*\+\s*cellular\b/i.test(title)) return 'Wi‑Fi + Cellular';
+  if (/\bcellular\b|\blte\b/i.test(title)) return 'Cellular';
+  if (/\b5g\b/i.test(title)) return '5G';
+  if (/\bwi[\s-]?fi\b/i.test(title)) return 'Wi‑Fi';
+  return undefined;
+}
+
+function extractSize(title: string) {
+  const mm = title.match(/\b(\d{2,3})\s*mm\b/i);
+  if (mm) return `${mm[1]}mm`;
+
+  const inch = title.match(/\b(\d{1,3}(?:[.,]\d)?)\s*(?:inch(?:es)?|″|")\b/i);
+  if (inch) return `${inch[1].replace(',', '.')}″`;
+
+  return undefined;
+}
+
+export function extractVariantData(title: string): VariantAttributes {
+  return {
+    color: extractColor(title),
+    storage: extractStorage(title),
+    ram: extractRam(title),
+    connectivity: extractConnectivity(title),
+    size: extractSize(title),
+    condition: SECONDARY_CONDITION_PATTERN.test(title) ? 'Refurbished / Used' : 'New',
+  };
+}
+
+function compactVariantData(data: VariantAttributes): VariantAttributes {
+  return Object.fromEntries(
+    Object.entries(data).filter(([, value]) => Boolean(value)),
+  ) as VariantAttributes;
+}
+
+function variantKey(data?: VariantAttributes) {
+  if (!data) return 'base';
+
+  return Object.entries(compactVariantData(data))
+    .filter(([key, value]) => !(key === 'condition' && value === 'New'))
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => `${key}:${value}`)
+    .join('|') || 'base';
+}
+
+function variantLabel(data?: VariantAttributes) {
+  if (!data) return undefined;
+
+  const values = [
+    data.storage,
+    data.ram ? `${data.ram} RAM` : undefined,
+    data.color,
+    data.connectivity,
+    data.size,
+    data.condition && data.condition !== 'New' ? data.condition : undefined,
+  ].filter(Boolean);
+
+  return values.length ? values.join(' · ') : undefined;
+}
+
+function removeVariantTokens(value: string) {
+  let output = value;
+
+  for (const [pattern] of COLOR_VARIANTS) {
+    output = output.replace(pattern, ' ');
+  }
+
+  output = output
+    .replace(/\b(?:64|128|256|512)\s*GB\b/gi, ' ')
+    .replace(/\b\d+(?:\.\d+)?\s*TB\b/gi, ' ')
+    .replace(/\b\d{1,3}\s*GB\s*(?:RAM|memory)\b/gi, ' ')
+    .replace(/\bwi[\s-]?fi\s*\+\s*cellular\b/gi, ' ')
+    .replace(/\bcellular\b|\blte\b|\b5g\b/gi, ' ')
+    .replace(/\b[A-Z0-9]{5,}[A-Z0-9/.-]*\/[A-Z0-9.-]+\b/gi, ' ');
+
+  if (/watch/i.test(value)) {
+    output = output.replace(/\b\d{2,3}\s*mm\b/gi, ' ');
+  }
+
+  return output.replace(/\s+/g, ' ').trim();
+}
+
+export function canonicalizeProductTitle(title: string) {
+  let value = cleanProductTitle(title);
+
+  value = value.replace(
+    /^\s*(telefons?|smartphone|mobile phone|portatīvais dators|laptop|televizors?|tv)\s+/i,
+    '',
+  );
+
+  return removeVariantTokens(value)
+    .replace(/\s*[,;:-]+\s*$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function productGroupIdentity(item: RawItem) {
+  const canonical = canonicalizeProductTitle(item.title || 'product');
+  const withoutBrand = stripLeadingBrand(canonical);
+  return `family:${normalizeTitle(withoutBrand || canonical)}`;
+}
+
+function rawPriceText(item: RawItem) {
+  const displayed =
+    item.price && typeof item.price === 'object'
+      ? item.price.displayed_price
+      : undefined;
+
+  return [
+    item.title,
+    item.description,
+    item.snippet,
+    displayed,
+    item.delivery_info?.delivery_message,
+    ...(item.tags || []),
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
+
+function isLikelyInstallment(item: RawItem) {
+  if (typeof item.price_multiplier === 'number' && item.price_multiplier > 1) return true;
+  return INSTALLMENT_PATTERN.test(rawPriceText(item));
+}
+
+function isSecondaryCondition(item: RawItem) {
+  return SECONDARY_CONDITION_PATTERN.test(rawPriceText(item));
 }
 
 function isExcludedComparisonSite(item: RawItem) {
@@ -285,14 +458,7 @@ function isExcludedComparisonSite(item: RawItem) {
     .join(' ')
     .toLowerCase();
 
-  return EXCLUDED_COMPARISON_DOMAINS.some((domain) =>
-    haystack.includes(domain),
-  );
-}
-
-function inferBrand(title: string) {
-  const token = title.trim().split(/\s+/)[0] || '';
-  return token.length > 1 ? token.replace(/[,:;]+$/, '') : undefined;
+  return EXCLUDED_COMPARISON_DOMAINS.some((domain) => haystack.includes(domain));
 }
 
 function numberRating(value: unknown, max: unknown) {
@@ -304,53 +470,6 @@ function numberRating(value: unknown, max: unknown) {
   }
 
   return Math.max(0, Math.min(5, (v / m) * 5));
-}
-
-function clampScore(value: number) {
-  return Math.round(Math.max(45, Math.min(92, value)));
-}
-
-/**
- * A score is not the same as confidence.
- * One lone price with no shipping/reputation data should be neutral-ish,
- * not 90/100 and not punished down to the 40s.
- */
-function offerScore(
-  total: number,
-  minTotal: number,
-  maxTotal: number,
-  rating: number | undefined,
-  shippingKnown: boolean,
-  deliveryMessage: string | undefined,
-  offerCount: number,
-) {
-  let score = 64;
-
-  if (offerCount <= 1) {
-    score -= 2;
-  } else {
-    const pricePosition =
-      maxTotal === minTotal
-        ? 0.5
-        : (maxTotal - total) / (maxTotal - minTotal);
-
-    score += (pricePosition - 0.5) * 18;
-    score += Math.min(8, (offerCount - 1) * 2.5);
-  }
-
-  if (rating != null) {
-    score += (rating - 3.5) * 4;
-  }
-
-  if (/free|bezmaksas/i.test(deliveryMessage || '')) {
-    score += 4;
-  } else if (shippingKnown) {
-    score += 2;
-  } else {
-    score -= 1;
-  }
-
-  return clampScore(score);
 }
 
 function directPrice(item: RawItem) {
@@ -379,20 +498,17 @@ function directCurrency(item: RawItem) {
     return item.price.currency;
   }
 
-  return (
-    item.currency ||
-    item.delivery_info?.delivery_price?.currency ||
-    'EUR'
-  );
+  return item.currency || item.delivery_info?.delivery_price?.currency || 'EUR';
 }
 
 function pickImage(item: RawItem) {
-  return (
-    item.product_images?.[0] ||
-    item.image_url ||
-    item.images?.[0]?.image_url ||
-    undefined
-  );
+  const candidates = [
+    ...(item.product_images || []),
+    item.image_url,
+    ...(item.images || []).map((image) => image.image_url),
+  ].filter(Boolean) as string[];
+
+  return candidates.find((url) => /^https?:\/\//i.test(url));
 }
 
 function identifiers(item: RawItem) {
@@ -414,24 +530,6 @@ function identifiers(item: RawItem) {
   };
 }
 
-function productGroupIdentity(item: RawItem) {
-  const canonical = normalizeTitle(
-    canonicalizeProductTitle(item.title || 'product'),
-  );
-
-  if (canonical.split(' ').length >= 2) {
-    return `model:${canonical}`;
-  }
-
-  const ids = identifiers(item);
-
-  if (ids.productId) return `pid:${ids.productId}`;
-  if (ids.gid) return `gid:${ids.gid}`;
-  if (ids.dataDocId) return `doc:${ids.dataDocId}`;
-
-  return `title:${canonical || 'product'}`;
-}
-
 function isProductLike(item: RawItem) {
   if (!item.title || directPrice(item) <= 0) return false;
   if (isExcludedComparisonSite(item)) return false;
@@ -447,23 +545,14 @@ function isProductLike(item: RawItem) {
     return true;
   }
 
-  // Latvia does not always expose a dedicated shopping block.
   if (type === 'organic' || type === 'paid') {
-    const hasDestination = Boolean(
+    return Boolean(
       item.domain ||
-        item.url ||
-        item.shopping_url ||
-        item.marketplace_url,
-    );
-
-    const hasMerchantSignal = Boolean(
-      item.seller ||
+        item.seller ||
         item.seller_name ||
-        item.marketplace ||
-        item.domain,
+        item.url ||
+        item.shopping_url,
     );
-
-    return hasDestination && hasMerchantSignal;
   }
 
   return false;
@@ -489,9 +578,7 @@ function collectProductItems(
     output.push(item);
   }
 
-  for (const child of Object.values(
-    value as Record<string, unknown>,
-  )) {
+  for (const child of Object.values(value as Record<string, unknown>)) {
     if (
       child &&
       (Array.isArray(child) || typeof child === 'object')
@@ -507,8 +594,7 @@ function merchantFromUrl(url?: string | null) {
   if (!url) return undefined;
 
   try {
-    const hostname = new URL(url).hostname.replace(/^www\./i, '');
-    return hostname || undefined;
+    return new URL(url).hostname.replace(/^www\./i, '');
   } catch {
     return undefined;
   }
@@ -519,9 +605,7 @@ function merchantName(item: RawItem) {
     item.seller_name,
     item.seller,
     item.domain,
-    merchantFromUrl(
-      item.url || item.shopping_url || item.marketplace_url,
-    ),
+    merchantFromUrl(item.url || item.shopping_url || item.marketplace_url),
     item.source,
   ];
 
@@ -545,15 +629,14 @@ function toOffer(
   'dealScore' | 'isCheapest' | 'isBestOverall'
 > {
   const price = directPrice(item);
+
   const shippingRaw =
     item.delivery_info?.delivery_price?.current ??
     item.shipping_price;
 
   const shippingKnown =
     typeof shippingRaw === 'number' ||
-    /free|bezmaksas/i.test(
-      item.delivery_info?.delivery_message || '',
-    );
+    /free|bezmaksas/i.test(item.delivery_info?.delivery_message || '');
 
   const shipping =
     typeof shippingRaw === 'number' && shippingRaw > 0
@@ -566,10 +649,17 @@ function toOffer(
       ? item.total_price
       : undefined;
 
+  const variantData = compactVariantData(
+    extractVariantData(item.title || ''),
+  );
+
   return {
     merchant: merchantName(item),
-    merchantDomain: item.domain || undefined,
-    variantLabel: extractVariantLabel(item.title || ''),
+    merchantDomain:
+      item.domain ||
+      merchantFromUrl(item.url || item.shopping_url || item.marketplace_url),
+    variantLabel: variantLabel(variantData),
+    variantData,
     price,
     shipping,
     shippingKnown,
@@ -605,13 +695,174 @@ function offerMerchantKey(
     'dealScore' | 'isCheapest' | 'isBestOverall'
   >,
 ) {
-  return (
-    offer.merchantDomain ||
-    offer.merchant ||
-    'unknown'
-  )
+  return (offer.merchantDomain || offer.merchant || 'unknown')
     .toLowerCase()
     .replace(/^www\./, '');
+}
+
+function median(values: number[]) {
+  if (!values.length) return 0;
+
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+
+  return sorted.length % 2
+    ? sorted[mid]
+    : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+function cleanGroupItems(items: RawItem[]) {
+  const base = items.filter(
+    (item) =>
+      !isExcludedComparisonSite(item) &&
+      !isLikelyInstallment(item) &&
+      !isSecondaryCondition(item) &&
+      directPrice(item) > 0,
+  );
+
+  if (base.length < 2) return base;
+
+  const prices = base.map(directPrice).filter((price) => price > 0);
+  const med = median(prices);
+
+  if (med < 100) return base;
+
+  return base.filter((item) => {
+    const price = directPrice(item);
+    const crediblePeers = prices.filter((peer) => peer >= med * 0.7);
+
+    if (crediblePeers.length >= 1 && price < med * 0.4) {
+      return false;
+    }
+
+    return true;
+  });
+}
+
+function scoreOffer(
+  total: number,
+  minTotal: number,
+  maxTotal: number,
+  rating?: number,
+  sellerVotes?: number,
+  deliveryKnown = false,
+  storeCount = 1,
+) {
+  if (storeCount < 2) return 0;
+
+  const pricePosition =
+    maxTotal === minTotal
+      ? 0.5
+      : (maxTotal - total) / (maxTotal - minTotal);
+
+  let score = 55 + pricePosition * 35;
+
+  if (rating != null) {
+    score += Math.max(-5, Math.min(5, (rating - 4) * 5));
+  }
+
+  if (sellerVotes && sellerVotes >= 50) score += 2;
+  if (deliveryKnown) score += 1;
+  if (storeCount >= 4) score += 2;
+
+  return Math.round(Math.max(45, Math.min(96, score)));
+}
+
+function scoreOffersByVariant(
+  rawOffers: Array<
+    Omit<
+      OfferView,
+      'dealScore' | 'isCheapest' | 'isBestOverall'
+    >
+  >,
+) {
+  const byVariant = new Map<
+    string,
+    Array<
+      Omit<
+        OfferView,
+        'dealScore' | 'isCheapest' | 'isBestOverall'
+      >
+    >
+  >();
+
+  for (const offer of rawOffers) {
+    const key = variantKey(offer.variantData);
+
+    byVariant.set(key, [
+      ...(byVariant.get(key) || []),
+      offer,
+    ]);
+  }
+
+  const scored: OfferView[] = [];
+
+  for (const group of byVariant.values()) {
+    const merchantCount = new Set(group.map(offerMerchantKey)).size;
+    const totals = group.map((offer) => offer.totalPrice);
+    const min = Math.min(...totals);
+    const max = Math.max(...totals);
+
+    const groupScored: OfferView[] = group.map((offer) => ({
+      ...offer,
+      dealScore: scoreOffer(
+        offer.totalPrice,
+        min,
+        max,
+        offer.sellerRating,
+        offer.sellerVotes,
+        Boolean(offer.shippingKnown),
+        merchantCount,
+      ),
+      isCheapest: offer.totalPrice === min,
+      isBestOverall: false,
+    }));
+
+    if (merchantCount >= 2) {
+      let bestIndex = 0;
+
+      groupScored.forEach((offer, index) => {
+        if (offer.dealScore > groupScored[bestIndex].dealScore) {
+          bestIndex = index;
+        }
+      });
+
+      groupScored[bestIndex].isBestOverall = true;
+    }
+
+    scored.push(...groupScored);
+  }
+
+  return scored.sort(
+    (a, b) =>
+      (b.isBestOverall ? 1 : 0) -
+        (a.isBestOverall ? 1 : 0) ||
+      a.totalPrice - b.totalPrice,
+  );
+}
+
+function buildVariantOptions(offers: OfferView[]) {
+  const map = new Map<string, Set<string>>();
+
+  for (const offer of offers) {
+    for (const [key, value] of Object.entries(offer.variantData || {})) {
+      if (!value) continue;
+      if (key === 'condition' && value === 'New') continue;
+
+      if (!map.has(key)) {
+        map.set(key, new Set());
+      }
+
+      map.get(key)!.add(value);
+    }
+  }
+
+  return Object.fromEntries(
+    Array.from(map.entries()).map(([key, values]) => [
+      key,
+      Array.from(values),
+    ]),
+  );
 }
 
 export function mapFastProductSearch(json: Json): ProductResult[] {
@@ -628,20 +879,25 @@ export function mapFastProductSearch(json: Json): ProductResult[] {
     );
   }
 
-  const rawItems = collectProductItems(
-    task.result || [],
-  ).filter((item) => !isExcludedComparisonSite(item));
-
+  const rawItems = collectProductItems(task.result || []);
   const groups = new Map<string, RawItem[]>();
 
   for (const item of rawItems) {
     const key = productGroupIdentity(item);
-    groups.set(key, [...(groups.get(key) || []), item]);
+
+    groups.set(key, [
+      ...(groups.get(key) || []),
+      item,
+    ]);
   }
 
   const products: ProductResult[] = [];
 
-  for (const [key, items] of groups.entries()) {
+  for (const [key, originalItems] of groups.entries()) {
+    const items = cleanGroupItems(originalItems);
+
+    if (!items.length) continue;
+
     const sortedItems = [...items].sort(
       (a, b) => directPrice(a) - directPrice(b),
     );
@@ -653,27 +909,18 @@ export function mapFastProductSearch(json: Json): ProductResult[] {
     const identityItem =
       sortedItems.find((item) => {
         const ids = identifiers(item);
+
         return Boolean(
           ids.productId || ids.gid || ids.dataDocId,
         );
       }) || first;
 
     const visualItem =
-      sortedItems.find((item) => Boolean(pickImage(item))) ||
-      first;
+      sortedItems.find((item) => Boolean(pickImage(item))) || first;
 
     const ids = identifiers(identityItem);
 
-    const variantSet = new Set<string>();
-
-    for (const item of sortedItems) {
-      const variant = extractVariantLabel(item.title || '');
-      if (variant) variantSet.add(variant);
-    }
-
-    // One row per store. If a store has multiple colours/variants, keep its
-    // cheapest matching offer and expose available variants separately.
-    const byMerchant = new Map<
+    const unique = new Map<
       string,
       Omit<
         OfferView,
@@ -682,62 +929,51 @@ export function mapFastProductSearch(json: Json): ProductResult[] {
     >();
 
     for (const item of sortedItems) {
-      if (isExcludedComparisonSite(item)) continue;
-
       const offer = toOffer(item);
-      const merchantKey = offerMerchantKey(offer);
-      const existing = byMerchant.get(merchantKey);
+
+      const keyForOffer = `${offerMerchantKey(
+        offer,
+      )}|${variantKey(offer.variantData)}`;
+
+      const existing = unique.get(keyForOffer);
 
       if (
         !existing ||
         offer.totalPrice < existing.totalPrice
       ) {
-        byMerchant.set(merchantKey, offer);
+        unique.set(keyForOffer, offer);
       }
     }
 
-    const rawOffers = Array.from(byMerchant.values());
+    const rawOffers = Array.from(unique.values());
 
     if (!rawOffers.length) continue;
 
-    const totals = rawOffers.map(
-      (offer) => offer.totalPrice,
+    const offers = scoreOffersByVariant(rawOffers);
+
+    const bestPrice = Math.min(
+      ...offers.map((offer) => offer.totalPrice),
     );
 
-    const min = Math.min(...totals);
-    const max = Math.max(...totals);
+    const familyTitle = canonicalizeProductTitle(
+      first.title || 'Produkts',
+    );
 
-    const offers: OfferView[] = rawOffers.map((offer) => ({
-      ...offer,
-      dealScore: offerScore(
-        offer.totalPrice,
-        min,
-        max,
-        offer.sellerRating,
-        Boolean(offer.shippingKnown),
-        offer.deliveryMessage,
-        rawOffers.length,
-      ),
-      isCheapest: offer.totalPrice === min,
-      isBestOverall: false,
-    }));
+    const brand = inferBrand(
+      sortedItems.map((item) => item.title || '').join(' '),
+    );
 
-    let bestIndex = 0;
+    const displayTitle =
+      brand &&
+      !familyTitle.toLowerCase().startsWith(brand.toLowerCase())
+        ? `${brand} ${familyTitle}`
+        : familyTitle;
 
-    offers.forEach((offer, index) => {
-      if (
-        offer.dealScore > offers[bestIndex].dealScore
-      ) {
-        bestIndex = index;
-      }
-    });
+    const storeCount = new Set(offers.map(offerMerchantKey)).size;
 
-    if (offers.length > 1 && offers[bestIndex]) {
-      offers[bestIndex].isBestOverall = true;
-    }
-
-    const canonicalTitle =
-      canonicalizeProductTitle(first.title || 'Produkts');
+    const dealScores = offers
+      .map((offer) => offer.dealScore)
+      .filter((score) => score > 0);
 
     products.push({
       id: key,
@@ -745,23 +981,28 @@ export function mapFastProductSearch(json: Json): ProductResult[] {
       sourceProductId: ids.productId,
       gid: ids.gid,
       dataDocId: ids.dataDocId,
-      title: canonicalTitle,
-      normalizedTitle: normalizeTitle(canonicalTitle),
-      brand: inferBrand(canonicalTitle),
+      title: displayTitle,
+      normalizedTitle: normalizeTitle(displayTitle),
+      brand,
       category: 'Elektronika',
       description:
         first.description || first.snippet || undefined,
       image: pickImage(visualItem),
-      bestPrice: min,
+      bestPrice,
       currency:
         offers[0]?.currency || directCurrency(first),
       dealScore:
-        offers[bestIndex]?.dealScore || 60,
-      offers: offers.sort(
-        (a, b) => a.totalPrice - b.totalPrice,
-      ),
-      storesCount: offers.length,
-      variants: Array.from(variantSet).slice(0, 8),
+        dealScores.length ? Math.max(...dealScores) : 0,
+      offers,
+      storesCount: storeCount,
+      variants: Array.from(
+        new Set(
+          offers
+            .map((offer) => offer.variantLabel)
+            .filter(Boolean) as string[],
+        ),
+      ).slice(0, 12),
+      variantOptions: buildVariantOptions(offers),
     });
   }
 
@@ -771,11 +1012,17 @@ export function mapFastProductSearch(json: Json): ProductResult[] {
         Number.isFinite(product.bestPrice) &&
         product.bestPrice > 0,
     )
-    .sort(
-      (a, b) =>
+    .sort((a, b) => {
+      const coverage =
+        (b.storesCount || 0) - (a.storesCount || 0);
+
+      if (coverage) return coverage;
+
+      return (
         b.dealScore - a.dealScore ||
-        a.bestPrice - b.bestPrice,
-    )
+        a.bestPrice - b.bestPrice
+      );
+    })
     .slice(0, 24);
 }
 
@@ -813,11 +1060,12 @@ export function mapSellerOffers(json: Json): OfferView[] {
   }
 
   const raw: RawItem[] = (task.result || []).flatMap(
-    (result: Json) =>
-      flattenMerchant(result?.items || []),
+    (result: Json) => flattenMerchant(result?.items || []),
   );
 
-  const byMerchant = new Map<
+  const cleaned = cleanGroupItems(raw);
+
+  const unique = new Map<
     string,
     Omit<
       OfferView,
@@ -825,66 +1073,114 @@ export function mapSellerOffers(json: Json): OfferView[] {
     >
   >();
 
-  for (const item of raw) {
-    if (
-      directPrice(item) <= 0 ||
-      isExcludedComparisonSite(item)
-    ) {
-      continue;
-    }
-
+  for (const item of cleaned) {
     const offer = toOffer(item);
-    const key = offerMerchantKey(offer);
-    const existing = byMerchant.get(key);
+    const key = `${offerMerchantKey(offer)}|${variantKey(
+      offer.variantData,
+    )}`;
+
+    const existing = unique.get(key);
 
     if (
       !existing ||
       offer.totalPrice < existing.totalPrice
     ) {
-      byMerchant.set(key, offer);
+      unique.set(key, offer);
     }
   }
 
-  const rawOffers = Array.from(byMerchant.values());
+  return scoreOffersByVariant(Array.from(unique.values()));
+}
 
-  if (!rawOffers.length) return [];
-
-  const totals = rawOffers.map(
-    (offer) => offer.totalPrice,
+function tokenSet(value: string) {
+  return new Set(
+    normalizeTitle(value)
+      .split(' ')
+      .filter((token) => token.length > 1),
   );
-  const min = Math.min(...totals);
-  const max = Math.max(...totals);
+}
 
-  const scored: OfferView[] = rawOffers.map((offer) => ({
-    ...offer,
-    dealScore: offerScore(
-      offer.totalPrice,
-      min,
-      max,
-      offer.sellerRating,
-      Boolean(offer.shippingKnown),
-      offer.deliveryMessage,
-      rawOffers.length,
-    ),
-    isCheapest: offer.totalPrice === min,
-    isBestOverall: false,
-  }));
+function similarity(a: string, b: string) {
+  const left = tokenSet(
+    stripLeadingBrand(canonicalizeProductTitle(a)),
+  );
 
-  let best = 0;
+  const right = tokenSet(
+    stripLeadingBrand(canonicalizeProductTitle(b)),
+  );
 
-  scored.forEach((offer, index) => {
-    if (offer.dealScore > scored[best].dealScore) {
-      best = index;
-    }
-  });
+  if (!left.size || !right.size) return 0;
 
-  if (scored.length > 1) {
-    scored[best].isBestOverall = true;
+  let common = 0;
+
+  for (const token of left) {
+    if (right.has(token)) common += 1;
   }
 
-  return scored.sort(
-    (a, b) => a.totalPrice - b.totalPrice,
+  return common / Math.max(left.size, right.size);
+}
+
+export type MerchantProductCandidate = {
+  title: string;
+  image?: string;
+  productId?: string;
+  gid?: string;
+  dataDocId?: string;
+  variantData?: VariantAttributes;
+};
+
+export function selectMerchantProductCandidate(
+  json: Json,
+  expectedTitle: string,
+): MerchantProductCandidate | null {
+  const task = json?.tasks?.[0];
+
+  if (!task || taskPending(json)) return null;
+
+  const raw: RawItem[] = (task.result || []).flatMap(
+    (result: Json) => flattenMerchant(result?.items || []),
   );
+
+  const candidates = raw
+    .filter(
+      (item) =>
+        !isLikelyInstallment(item) &&
+        !isSecondaryCondition(item),
+    )
+    .map((item) => {
+      const ids = identifiers(item);
+
+      return {
+        item,
+        ids,
+        score:
+          similarity(item.title || '', expectedTitle) +
+          (item.is_best_match ? 0.25 : 0) +
+          (ids.productId || ids.gid || ids.dataDocId
+            ? 0.1
+            : 0),
+      };
+    })
+    .filter(
+      (candidate) =>
+        candidate.ids.productId ||
+        candidate.ids.gid ||
+        candidate.ids.dataDocId,
+    )
+    .sort((a, b) => b.score - a.score);
+
+  const best = candidates[0];
+
+  if (!best || best.score < 0.45) return null;
+
+  return {
+    title: best.item.title || expectedTitle,
+    image: pickImage(best.item),
+    productId: best.ids.productId,
+    gid: best.ids.gid,
+    dataDocId: best.ids.dataDocId,
+    variantData: extractVariantData(best.item.title || ''),
+  };
 }
 
 export function taskPending(json: Json) {

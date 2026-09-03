@@ -1,24 +1,32 @@
 import { NextResponse } from 'next/server';
 import { isRestrictedShoppingQuery } from '@/lib/safety';
 
-export const maxDuration = 30;
+type ShoppingPlan = {
+  searchQuery: string;
+  summary: string;
+  constraints: string[];
+  category: string;
+};
 
-function extractOutputText(json: any) {
-  return json?.output
-    ?.flatMap(
-      (item: any) => item?.content || [],
-    )
-    ?.find(
-      (content: any) =>
-        content?.type === 'output_text',
-    )?.text;
+function fallbackPlan(
+  prompt: string,
+): ShoppingPlan {
+  return {
+    searchQuery: prompt,
+    summary:
+      'Meklēšu pēc tava apraksta. Bez AI atslēgas CENIQ izmanto pašu tekstu kā meklēšanas frāzi.',
+    constraints: [],
+    category: 'shopping',
+  };
 }
 
 export async function POST(
   request: Request,
 ) {
   try {
-    const body = await request.json();
+    const body =
+      await request.json();
+
     const prompt = String(
       body?.prompt || '',
     ).trim();
@@ -34,7 +42,9 @@ export async function POST(
     }
 
     if (
-      isRestrictedShoppingQuery(prompt)
+      isRestrictedShoppingQuery(
+        prompt,
+      )
     ) {
       return NextResponse.json(
         {
@@ -46,105 +56,107 @@ export async function POST(
     }
 
     const apiKey =
-      process.env.OPENAI_API_KEY;
+      process.env.GEMINI_API_KEY;
 
     if (!apiKey) {
-      return NextResponse.json(
-        {
-          error:
-            'CENIQ AI vēl nav aktivizēts. Vercel jāpievieno OPENAI_API_KEY.',
-        },
-        { status: 503 },
-      );
+      return NextResponse.json({
+        plan:
+          fallbackPlan(prompt),
+        provider:
+          'ceniq-fallback',
+      });
     }
 
+    const model =
+      process.env.GEMINI_MODEL ||
+      'gemini-2.5-flash';
+
     const response = await fetch(
-      'https://api.openai.com/v1/responses',
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+        model,
+      )}:generateContent?key=${encodeURIComponent(
+        apiKey,
+      )}`,
       {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${apiKey}`,
           'Content-Type':
             'application/json',
         },
         body: JSON.stringify({
-          model:
-            process.env.OPENAI_MODEL ||
-            'gpt-5.6-luna',
-          reasoning: { effort: 'low' },
-          instructions:
-            'Tu esi CENIQ AI — Latvijas pircēja produktu atlases asistents. Izveido konkrētu Google Shopping meklēšanas frāzi angļu valodā, saglabājot modeļus, izmērus un tehniskos parametrus. Neizdomā parametrus, kurus lietotājs nav prasījis. Kopsavilkumu raksti latviski un īsi.',
-          input: prompt,
-          text: {
-            format: {
-              type: 'json_schema',
-              name: 'ceniq_shopping_plan',
-              strict: true,
-              schema: {
-                type: 'object',
-                properties: {
-                  searchQuery: {
-                    type: 'string',
-                  },
-                  summary: {
-                    type: 'string',
-                  },
-                  constraints: {
-                    type: 'array',
-                    items: {
-                      type: 'string',
-                    },
-                  },
-                  category: {
-                    type: 'string',
-                  },
-                },
-                required: [
-                  'searchQuery',
-                  'summary',
-                  'constraints',
-                  'category',
-                ],
-                additionalProperties: false,
+          system_instruction: {
+            parts: [
+              {
+                text:
+                  'Tu esi CENIQ AI — Latvijas pircēja produktu atlases asistents. Izveido konkrētu Google Shopping meklēšanas frāzi, saglabājot modeļus, izmērus, budžetu un tehniskos parametrus. Neizdomā prasības. Atgriez tikai JSON ar searchQuery, summary, constraints, category.',
               },
-            },
+            ],
           },
-          max_output_tokens: 350,
+          contents: [
+            {
+              parts: [
+                {
+                  text: prompt,
+                },
+              ],
+            },
+          ],
+          generationConfig: {
+            responseMimeType:
+              'application/json',
+            temperature: 0.2,
+            maxOutputTokens: 350,
+          },
         }),
         cache: 'no-store',
       },
     );
 
-    const json = await response.json();
+    const json =
+      await response.json();
 
     if (!response.ok) {
-      throw new Error(
-        json?.error?.message ||
-          'OpenAI pieprasījums neizdevās.',
-      );
+      return NextResponse.json({
+        plan:
+          fallbackPlan(prompt),
+        provider:
+          'ceniq-fallback',
+      });
     }
 
-    const outputText =
-      extractOutputText(json);
+    const text =
+      json?.candidates?.[0]
+        ?.content?.parts?.[0]
+        ?.text;
 
-    if (!outputText) {
-      throw new Error(
-        'CENIQ AI neatgrieza atbildi.',
-      );
+    if (!text) {
+      return NextResponse.json({
+        plan:
+          fallbackPlan(prompt),
+        provider:
+          'ceniq-fallback',
+      });
     }
 
-    return NextResponse.json({
-      plan: JSON.parse(outputText),
-    });
-  } catch (error) {
-    console.error('CENIQ AI:', error);
-
+    try {
+      return NextResponse.json({
+        plan:
+          JSON.parse(text),
+        provider: 'gemini',
+      });
+    } catch {
+      return NextResponse.json({
+        plan:
+          fallbackPlan(prompt),
+        provider:
+          'ceniq-fallback',
+      });
+    }
+  } catch {
     return NextResponse.json(
       {
         error:
-          error instanceof Error
-            ? error.message
-            : 'CENIQ AI neizdevās.',
+          'CENIQ AI neizdevās.',
       },
       { status: 502 },
     );

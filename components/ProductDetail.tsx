@@ -4,81 +4,77 @@ import {
   ChangeEvent,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import PriceChart from './PriceChart';
 
 type Product = any;
 
-type AiVerdict = {
+type Verdict = {
   verdict:
     | 'Pērc tagad'
     | 'Pagaidi'
     | 'Salīdzini vēl';
   summary: string;
   reasons: string[];
-  confidence: 'zema' | 'vidēja' | 'augsta';
+  confidence:
+    | 'zema'
+    | 'vidēja'
+    | 'augsta';
 };
 
-const money = (
-  value: number,
-  currency = 'EUR',
-) =>
+const AXIS_LABELS: Record<string, string> = {
+  storage: 'Atmiņa',
+  ram: 'RAM',
+  color: 'Krāsa',
+  connectivity: 'Savienojums',
+  size: 'Izmērs',
+  condition: 'Stāvoklis',
+};
+
+const AXIS_ORDER = [
+  'storage',
+  'ram',
+  'color',
+  'connectivity',
+  'size',
+  'condition',
+];
+
+const money = (value: number, currency = 'EUR') =>
   new Intl.NumberFormat('lv-LV', {
     style: 'currency',
     currency,
   }).format(value);
 
-function shippingText(offer: any) {
-  if (!offer) return 'Nav datu';
-
-  if (offer.shippingKnown) {
-    if (Number(offer.shipping) > 0) {
-      return money(
-        Number(offer.shipping),
-        offer.currency,
-      );
-    }
-
-    if (
-      /free|bezmaksas/i.test(
-        String(offer.deliveryMessage || ''),
-      )
-    ) {
-      return 'Bezmaksas';
-    }
-
-    if (Number(offer.shipping) === 0) {
-      return '€0';
-    }
-  }
-
-  if (offer.deliveryMessage) {
-    return offer.deliveryMessage;
-  }
-
-  return 'Nav datu';
+function merchantKey(offer: any) {
+  return String(
+    offer.merchantDomain ||
+      offer.merchant ||
+      'unknown',
+  )
+    .toLowerCase()
+    .replace(/^www\./, '');
 }
 
-function offerLabel(
+function availabilityText(offer: any) {
+  return (
+    offer.deliveryMessage ||
+    'Pieejamību pārbaudīt veikalā'
+  );
+}
+
+function matchVariant(
   offer: any,
-  hasComparison: boolean,
+  selected: Record<string, string>,
 ) {
-  if (
-    hasComparison &&
-    offer.isBestOverall
-  ) {
-    return '🏆 CENIQ izvēle';
-  }
+  const data = offer.variantData || {};
 
-  if (
-    hasComparison &&
-    offer.isCheapest
-  ) {
-    return '💰 Lētākais';
-  }
-
-  return 'Piedāvājums';
+  return Object.entries(selected).every(
+    ([key, value]) =>
+      !value || data[key] === value,
+  );
 }
 
 export default function ProductDetail({
@@ -91,18 +87,23 @@ export default function ProductDetail({
   const [error, setError] = useState('');
   const [refreshing, setRefreshing] =
     useState(false);
+  const [enriching, setEnriching] =
+    useState(false);
   const [saved, setSaved] = useState(false);
   const [target, setTarget] = useState('');
   const [alertMsg, setAlertMsg] = useState('');
-  const [showAllOffers, setShowAllOffers] =
-    useState(false);
-
+  const [showAll, setShowAll] = useState(false);
+  const [selected, setSelected] =
+    useState<Record<string, string>>({});
   const [verdict, setVerdict] =
-    useState<AiVerdict | null>(null);
+    useState<Verdict | null>(null);
+  const [verdictProvider, setVerdictProvider] =
+    useState('');
   const [verdictLoading, setVerdictLoading] =
     useState(false);
   const [verdictError, setVerdictError] =
     useState('');
+  const autoEnrichStarted = useRef(false);
 
   async function load() {
     const response = await fetch(
@@ -113,10 +114,8 @@ export default function ProductDetail({
     const data = await response.json();
 
     if (!response.ok) {
-      setError(
-        data.error || 'Produkts nav atrasts.',
-      );
-      return;
+      setError(data.error || 'Produkts nav atrasts.');
+      return null;
     }
 
     setProduct(data.product);
@@ -127,68 +126,186 @@ export default function ProductDetail({
     ) {
       setTarget(
         (
-          data.product.currentBestPrice * 0.95
+          data.product.currentBestPrice *
+          0.95
         ).toFixed(2),
       );
     }
+
+    return data.product;
   }
 
   useEffect(() => {
     load();
   }, [id]);
 
-  const sortedOffers = useMemo(
-    () =>
-      [...(product?.offers || [])].sort(
-        (a: any, b: any) => {
-          if (
-            a.isBestOverall !== b.isBestOverall
-          ) {
-            return a.isBestOverall ? -1 : 1;
-          }
-
-          return a.totalPrice - b.totalPrice;
-        },
-      ),
+  const allOffers = useMemo(
+    () => product?.offers || [],
     [product],
   );
+
+  const variantOptions = useMemo(() => {
+    const map = new Map<
+      string,
+      Set<string>
+    >();
+
+    for (const offer of allOffers) {
+      for (const [key, value] of Object.entries(
+        offer.variantData || {},
+      )) {
+        if (!value) continue;
+
+        if (
+          key === 'condition' &&
+          value === 'New'
+        ) {
+          continue;
+        }
+
+        if (!map.has(key)) {
+          map.set(key, new Set());
+        }
+
+        map.get(key)!.add(String(value));
+      }
+    }
+
+    return Object.fromEntries(
+      Array.from(map.entries()).map(
+        ([key, values]) => [
+          key,
+          Array.from(values),
+        ],
+      ),
+    ) as Record<string, string[]>;
+  }, [allOffers]);
+
+  useEffect(() => {
+    if (
+      Object.keys(selected).length ||
+      !allOffers.length
+    ) {
+      return;
+    }
+
+    const cheapest = [...allOffers].sort(
+      (a: any, b: any) =>
+        a.totalPrice - b.totalPrice,
+    )[0];
+
+    const defaults: Record<
+      string,
+      string
+    > = {};
+
+    for (const axis of AXIS_ORDER) {
+      const options =
+        variantOptions[axis] || [];
+
+      if (options.length <= 1) {
+        continue;
+      }
+
+      defaults[axis] =
+        cheapest?.variantData?.[axis] ||
+        options[0];
+    }
+
+    setSelected(defaults);
+  }, [
+    allOffers,
+    variantOptions,
+    selected,
+  ]);
+
+  const filteredOffers = useMemo(() => {
+    return allOffers
+      .filter((offer: any) =>
+        matchVariant(offer, selected),
+      )
+      .sort((a: any, b: any) => {
+        if (
+          a.isBestOverall !==
+          b.isBestOverall
+        ) {
+          return a.isBestOverall ? -1 : 1;
+        }
+
+        return (
+          a.totalPrice - b.totalPrice
+        );
+      });
+  }, [allOffers, selected]);
 
   const storeCount = useMemo(
     () =>
       new Set(
-        sortedOffers.map(
+        filteredOffers.map(
           (offer: any) =>
-            offer.merchantDomain ||
-            offer.merchant,
+            merchantKey(offer),
         ),
       ).size,
-    [sortedOffers],
+    [filteredOffers],
   );
 
-  const hasComparison = storeCount > 1;
-  const topOffers = sortedOffers.slice(0, 3);
-  const visibleAllOffers = showAllOffers
-    ? sortedOffers
-    : sortedOffers.slice(0, 8);
+  const totalStoreCount = useMemo(
+    () =>
+      new Set(
+        allOffers.map(
+          (offer: any) =>
+            merchantKey(offer),
+        ),
+      ).size,
+    [allOffers],
+  );
+
+  const visibleOffers = showAll
+    ? filteredOffers
+    : filteredOffers.slice(0, 3);
 
   const best =
-    sortedOffers.find(
-      (offer: any) => offer.isBestOverall,
+    filteredOffers.find(
+      (offer: any) =>
+        offer.isBestOverall,
     ) ||
-    sortedOffers.find(
-      (offer: any) => offer.isCheapest,
+    filteredOffers.find(
+      (offer: any) =>
+        offer.isCheapest,
     ) ||
-    sortedOffers[0];
+    filteredOffers[0];
 
-  async function refresh() {
-    setRefreshing(true);
-    setError('');
+  const bestScore =
+    storeCount >= 2
+      ? Math.max(
+          0,
+          ...filteredOffers.map(
+            (offer: any) =>
+              Number(offer.dealScore || 0),
+          ),
+        )
+      : 0;
+
+  async function runRefresh(
+    force = false,
+    silent = false,
+  ) {
+    if (refreshing || enriching) return;
+
+    if (silent) {
+      setEnriching(true);
+    } else {
+      setRefreshing(true);
+      setError('');
+    }
 
     try {
       const start = await fetch(
         `/api/products/${encodeURIComponent(
           id,
-        )}/refresh`,
+        )}/refresh?force=${
+          force ? '1' : '0'
+        }`,
         { method: 'POST' },
       );
 
@@ -197,30 +314,35 @@ export default function ProductDetail({
       if (!start.ok) {
         throw new Error(
           startData.error ||
-            'Neizdevās atjaunot cenas.',
+            'Neizdevās atrast vairāk piedāvājumu.',
         );
       }
 
       if (!startData.pending) {
         await load();
-        setVerdict(null);
         return;
       }
 
+      let stage =
+        startData.stage || 'sellers';
+      let taskId = startData.taskId;
+
       for (
         let attempt = 0;
-        attempt < 35;
+        attempt < 50;
         attempt += 1
       ) {
         await new Promise((resolve) =>
-          setTimeout(resolve, 1600),
+          setTimeout(resolve, 1300),
         );
 
         const poll = await fetch(
           `/api/products/${encodeURIComponent(
             id,
-          )}/refresh?taskId=${encodeURIComponent(
-            startData.taskId,
+          )}/refresh?stage=${encodeURIComponent(
+            stage,
+          )}&taskId=${encodeURIComponent(
+            taskId,
           )}`,
         );
 
@@ -229,11 +351,17 @@ export default function ProductDetail({
         if (!poll.ok) {
           throw new Error(
             pollData.error ||
-              'Neizdevās atjaunot cenas.',
+              'Piedāvājumu atjaunošana neizdevās.',
           );
         }
 
-        if (pollData.pending) continue;
+        if (pollData.pending) {
+          stage =
+            pollData.stage || stage;
+          taskId =
+            pollData.taskId || taskId;
+          continue;
+        }
 
         await load();
         setVerdict(null);
@@ -241,18 +369,63 @@ export default function ProductDetail({
       }
 
       throw new Error(
-        'Cenu atjaunošana aizņēma pārāk ilgu laiku.',
+        'Veikalu meklēšana aizņēma pārāk ilgu laiku.',
       );
     } catch (e) {
-      setError(
-        e instanceof Error
-          ? e.message
-          : 'Neizdevās atjaunot.',
-      );
+      if (!silent) {
+        setError(
+          e instanceof Error
+            ? e.message
+            : 'Neizdevās atjaunot.',
+        );
+      }
     } finally {
       setRefreshing(false);
+      setEnriching(false);
     }
   }
+
+  useEffect(() => {
+    if (
+      !product ||
+      autoEnrichStarted.current
+    ) {
+      return;
+    }
+
+    const last =
+      product.lastEnrichedAt
+        ? new Date(
+            product.lastEnrichedAt,
+          ).getTime()
+        : 0;
+
+    const stale =
+      !last ||
+      Date.now() - last >
+        12 * 60 * 60 * 1000;
+
+    if (
+      stale &&
+      (totalStoreCount < 2 ||
+        !product.image)
+    ) {
+      autoEnrichStarted.current = true;
+
+      const timer =
+        window.setTimeout(
+          () =>
+            runRefresh(false, true),
+          500,
+        );
+
+      return () =>
+        window.clearTimeout(timer);
+    }
+  }, [
+    product,
+    totalStoreCount,
+  ]);
 
   async function wishlist() {
     const response = await fetch(
@@ -260,7 +433,8 @@ export default function ProductDetail({
       {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
+          'Content-Type':
+            'application/json',
         },
         body: JSON.stringify({
           productId: id,
@@ -279,18 +453,22 @@ export default function ProductDetail({
   async function createAlert() {
     setAlertMsg('');
 
-    const response = await fetch('/api/alerts', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
+    const response = await fetch(
+      '/api/alerts',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type':
+            'application/json',
+        },
+        body: JSON.stringify({
+          productId: id,
+          targetPrice: Number(target),
+          emailEnabled: true,
+          browserEnabled: true,
+        }),
       },
-      body: JSON.stringify({
-        productId: id,
-        targetPrice: Number(target),
-        emailEnabled: true,
-        browserEnabled: true,
-      }),
-    });
+    );
 
     const data = await response.json();
 
@@ -307,7 +485,7 @@ export default function ProductDetail({
     );
   }
 
-  async function getAiVerdict() {
+  async function getVerdict() {
     if (verdictLoading) return;
 
     setVerdictLoading(true);
@@ -326,16 +504,19 @@ export default function ProductDetail({
       if (!response.ok) {
         throw new Error(
           data.error ||
-            'CENIQ AI analīze neizdevās.',
+            'CENIQ analīze neizdevās.',
         );
       }
 
       setVerdict(data.verdict);
+      setVerdictProvider(
+        data.provider || '',
+      );
     } catch (e) {
       setVerdictError(
         e instanceof Error
           ? e.message
-          : 'CENIQ AI analīze neizdevās.',
+          : 'CENIQ analīze neizdevās.',
       );
     } finally {
       setVerdictLoading(false);
@@ -363,8 +544,11 @@ export default function ProductDetail({
   }
 
   return (
-    <div className="container productpage">
-      <a className="backlink" href="/">
+    <div className="container productpage productpage-v21">
+      <a
+        className="backlink"
+        href="/"
+      >
         ← Atpakaļ uz meklēšanu
       </a>
 
@@ -376,8 +560,11 @@ export default function ProductDetail({
               alt={product.title}
             />
           ) : (
-            <div className="imagefallback">
-              C
+            <div className="imagefallback imagefallback-soft">
+              <span>C</span>
+              <small>
+                Meklējam produkta bildi
+              </small>
             </div>
           )}
         </div>
@@ -385,37 +572,116 @@ export default function ProductDetail({
         <div className="detailcopy">
           <div className="eyebrow">
             {product.brand ||
-              'CENIQ atrasts produkts'}
+              'CENIQ produkts'}
           </div>
 
           <h1>{product.title}</h1>
 
-          <div className="detailscore">
+          {Object.keys(
+            variantOptions,
+          ).length > 0 && (
+            <div className="variantpicker">
+              {AXIS_ORDER.map(
+                (axis) => {
+                  const options =
+                    variantOptions[
+                      axis
+                    ] || [];
+
+                  if (
+                    options.length <=
+                    1
+                  ) {
+                    return null;
+                  }
+
+                  return (
+                    <div
+                      className="variantaxis"
+                      key={axis}
+                    >
+                      <span>
+                        {
+                          AXIS_LABELS[
+                            axis
+                          ]
+                        }
+                      </span>
+
+                      <div className="variantbuttons">
+                        {options.map(
+                          (option) => (
+                            <button
+                              key={option}
+                              className={
+                                selected[
+                                  axis
+                                ] ===
+                                option
+                                  ? 'active'
+                                  : ''
+                              }
+                              onClick={() => {
+                                setSelected(
+                                  (current) => ({
+                                    ...current,
+                                    [axis]:
+                                      option,
+                                  }),
+                                );
+
+                                setShowAll(false);
+                              }}
+                            >
+                              {option}
+                            </button>
+                          ),
+                        )}
+                      </div>
+                    </div>
+                  );
+                },
+              )}
+            </div>
+          )}
+
+          <div className="productfacts">
             <div>
-              <span>Labākā atrastā cena</span>
+              <span>Labākā cena</span>
               <strong>
-                {product.currentBestPrice
+                {best
                   ? money(
-                      product.currentBestPrice,
-                      product.currency,
+                      best.totalPrice,
+                      best.currency,
                     )
                   : '—'}
               </strong>
             </div>
 
-            <div className="score big">
-              <b>{product.dealScore}</b>
-              <span>/100</span>
+            <div>
+              <span>Veikali</span>
+              <strong>
+                {storeCount || '—'}
+              </strong>
+            </div>
+
+            <div>
+              <span>CENIQ score</span>
+              <strong>
+                {bestScore > 0
+                  ? `${bestScore}/100`
+                  : 'Vēl nav'}
+              </strong>
             </div>
           </div>
 
-          <p className="muted">
-            CENIQ vērtējums raksturo
-            konkrētā piedāvājuma kvalitāti,
-            nevis paša produkta kvalitāti.
-            Datu pārliecība tiek rādīta
-            atsevišķi.
-          </p>
+          {enriching && (
+            <div className="enrichstatus">
+              <i />
+              CENIQ fonā meklē vēl
+              veikalus un produkta bildi…
+            </div>
+          )}
 
           <div className="detailactions">
             <button
@@ -424,55 +690,34 @@ export default function ProductDetail({
             >
               {saved
                 ? '♥ Saglabāts'
-                : '♡ Saglabāt izlasē'}
+                : '♡ Saglabāt'}
             </button>
 
             <button
               className="secondary"
-              onClick={refresh}
+              onClick={() =>
+                runRefresh(true, false)
+              }
               disabled={refreshing}
             >
               {refreshing
-                ? 'Atjauno…'
-                : '↻ Atjaunot cenas'}
+                ? 'Meklē…'
+                : totalStoreCount < 3
+                  ? '⌕ Atrast vairāk veikalu'
+                  : '↻ Atjaunot cenas'}
             </button>
           </div>
-
-          {best && (
-            <div className="recommend">
-              <span>
-                {hasComparison
-                  ? '🏆 CENIQ IZVĒLE'
-                  : 'ATRASTS PIEDĀVĀJUMS'}
-              </span>
-
-              <b>{best.merchant}</b>
-
-              <p>
-                {money(
-                  best.totalPrice,
-                  best.currency,
-                )}{' '}
-                kopā* · Piegāde:{' '}
-                {shippingText(best)}
-              </p>
-
-              {best.variantLabel && (
-                <small>
-                  Variants: {best.variantLabel}
-                </small>
-              )}
-            </div>
-          )}
 
           <div className="aiverdict">
             <div className="aiverdicthead">
               <div>
-                <span>✦ CENIQ AI</span>
+                <span>
+                  ✦ CENIQ VERDICT
+                </span>
                 <h3>
                   {verdict
                     ? verdict.verdict
-                    : 'Vai šo produktu ir vērts pirkt tagad?'}
+                    : 'Ko CENIQ domā par šo cenu?'}
                 </h3>
               </div>
 
@@ -487,7 +732,6 @@ export default function ProductDetail({
             {verdict ? (
               <>
                 <p>{verdict.summary}</p>
-
                 <ul>
                   {verdict.reasons.map(
                     (reason) => (
@@ -497,32 +741,32 @@ export default function ProductDetail({
                     ),
                   )}
                 </ul>
-
-                <button
-                  className="verdictrefresh"
-                  onClick={getAiVerdict}
-                >
-                  ↻ Analizēt vēlreiz
-                </button>
+                <small className="verdictprovider">
+                  {verdictProvider ===
+                  'gemini'
+                    ? 'AI: Gemini'
+                    : 'CENIQ bezmaksas noteikumu analīze'}
+                </small>
               </>
             ) : (
               <>
                 <p>
-                  AI izmanto tikai CENIQ
-                  savāktos cenu, veikalu,
-                  piegādes un cenu vēstures
-                  datus. Trūkstošus faktus tas
-                  neizdomā.
+                  Verdict darbojas arī
+                  bez maksas API.
+                  Gemini atslēga tikai
+                  uzlabo skaidrojumu.
                 </p>
 
                 <button
                   className="primary"
-                  onClick={getAiVerdict}
-                  disabled={verdictLoading}
+                  onClick={getVerdict}
+                  disabled={
+                    verdictLoading
+                  }
                 >
                   {verdictLoading
                     ? 'Analizē…'
-                    : '✦ Saņemt CENIQ AI viedokli'}
+                    : 'Saņemt CENIQ viedokli'}
                 </button>
               </>
             )}
@@ -537,180 +781,149 @@ export default function ProductDetail({
       </section>
 
       {error && (
-        <div className="errorbox">{error}</div>
+        <div className="errorbox">
+          {error}
+        </div>
       )}
 
-      <section className="detailsection">
+      <section className="detailsection offersection-v21">
         <div className="sectiontitle">
           <div>
-            <span>TOP PIEDĀVĀJUMI</span>
+            <span>
+              VEIKALU PIEDĀVĀJUMI
+            </span>
             <h2>
               {storeCount >= 3
-                ? '3 labākie veikali'
+                ? 'Labākie piedāvājumi'
                 : storeCount === 2
-                  ? '2 atrastie veikali'
-                  : 'Atrasts piedāvājums'}
+                  ? '2 veikali šim variantam'
+                  : storeCount === 1
+                    ? '1 veikals šim variantam'
+                    : 'Piedāvājumi nav atrasti'}
             </h2>
           </div>
 
           <p>
-            {storeCount}{' '}
-            {storeCount === 1
-              ? 'veikals'
-              : 'veikali'}
+            {filteredOffers.length}{' '}
+            {filteredOffers.length ===
+            1
+              ? 'piedāvājums'
+              : 'piedāvājumi'}
           </p>
         </div>
 
-        <div className="topoffergrid">
-          {topOffers.map(
-            (offer: any, index: number) => (
-              <article
-                className={`topoffer ${
-                  offer.isBestOverall
-                    ? 'topoffer-best'
-                    : ''
-                }`}
-                key={offer.id}
-              >
-                <div className="topofferindex">
-                  0{index + 1}
-                </div>
-
-                <div className="topoffermerchant">
-                  <span>
-                    {offerLabel(
-                      offer,
-                      hasComparison,
-                    )}
-                  </span>
-                  <h3>{offer.merchant}</h3>
-
-                  {offer.variantLabel && (
-                    <small>
-                      {offer.variantLabel}
-                    </small>
-                  )}
-                </div>
-
-                <div className="topofferprice">
-                  <span>Kopā*</span>
-                  <strong>
-                    {money(
-                      offer.totalPrice,
-                      offer.currency,
-                    )}
-                  </strong>
-                  <small>
-                    Piegāde:{' '}
-                    {shippingText(offer)}
-                  </small>
-                </div>
-
-                <a
-                  className="offercta"
-                  href={`/api/out?offerId=${encodeURIComponent(
-                    offer.id,
-                  )}`}
-                  target="_blank"
-                  rel="nofollow sponsored noopener"
+        {visibleOffers.length ? (
+          <div className="topoffergrid topoffergrid-v21">
+            {visibleOffers.map(
+              (
+                offer: any,
+                index: number,
+              ) => (
+                <article
+                  className={`topoffer ${
+                    offer.isBestOverall &&
+                    storeCount >= 2
+                      ? 'topoffer-best'
+                      : ''
+                  }`}
+                  key={offer.id}
                 >
-                  Uz veikalu ↗
-                </a>
-              </article>
-            ),
-          )}
-        </div>
+                  <div className="topofferindex">
+                    {String(
+                      index + 1,
+                    ).padStart(
+                      2,
+                      '0',
+                    )}
+                  </div>
 
-        <p className="offerdisclaimer">
-          * Ja piegādes cena nav pieejama
-          avota datos, “Kopā” pašlaik nozīmē
-          preces cenu. CENIQ nezināmu piegādi
-          nerāda kā bezmaksas.
-        </p>
+                  <div className="topoffermerchant">
+                    <span>
+                      {offer.isBestOverall &&
+                      storeCount >= 2
+                        ? 'CENIQ IZVĒLE'
+                        : offer.isCheapest &&
+                            storeCount >=
+                              2
+                          ? 'LĒTĀKAIS'
+                          : 'PIEDĀVĀJUMS'}
+                    </span>
+                    <h3>
+                      {offer.merchant}
+                    </h3>
 
-        {sortedOffers.length > 3 && (
-          <div className="alloffers">
-            <button
-              className="secondary showoffers"
-              onClick={() =>
-                setShowAllOffers(
-                  (current) => !current,
-                )
-              }
-            >
-              {showAllOffers
-                ? 'Paslēpt visus piedāvājumus'
-                : `Rādīt visus ${sortedOffers.length} piedāvājumus`}
-            </button>
+                    {offer.variantLabel && (
+                      <small>
+                        {offer.variantLabel}
+                      </small>
+                    )}
+                  </div>
 
-            {showAllOffers && (
-              <div className="offertable">
-                {visibleAllOffers.map(
-                  (offer: any) => (
-                    <div
-                      className={`offerrow ${
-                        offer.isBestOverall
-                          ? 'best'
-                          : ''
-                      }`}
-                      key={offer.id}
-                    >
-                      <div>
-                        <b>{offer.merchant}</b>
-                        <span>
-                          {offerLabel(
-                            offer,
-                            hasComparison,
-                          )}
-                          {offer.variantLabel
-                            ? ` · ${offer.variantLabel}`
-                            : ''}
-                        </span>
-                      </div>
+                  <div className="topofferprice">
+                    <span>
+                      Preces cena
+                    </span>
+                    <strong>
+                      {money(
+                        offer.price,
+                        offer.currency,
+                      )}
+                    </strong>
+                    <small>
+                      {availabilityText(
+                        offer,
+                      )}
+                    </small>
+                  </div>
 
-                      <div>
-                        <span>Prece</span>
+                  {offer.dealScore >
+                    0 &&
+                    storeCount >=
+                      2 && (
+                      <div className="offerscore">
                         <b>
-                          {money(
-                            offer.price,
-                            offer.currency,
-                          )}
+                          {
+                            offer.dealScore
+                          }
                         </b>
+                        <span>/100</span>
                       </div>
+                    )}
 
-                      <div>
-                        <span>Piegāde</span>
-                        <b>
-                          {shippingText(offer)}
-                        </b>
-                      </div>
-
-                      <div>
-                        <span>Kopā*</span>
-                        <strong>
-                          {money(
-                            offer.totalPrice,
-                            offer.currency,
-                          )}
-                        </strong>
-                      </div>
-
-                      <a
-                        className="offercta"
-                        href={`/api/out?offerId=${encodeURIComponent(
-                          offer.id,
-                        )}`}
-                        target="_blank"
-                        rel="nofollow sponsored noopener"
-                      >
-                        Uz veikalu ↗
-                      </a>
-                    </div>
-                  ),
-                )}
-              </div>
+                  <a
+                    className="offercta"
+                    href={`/api/out?offerId=${encodeURIComponent(
+                      offer.id,
+                    )}`}
+                    target="_blank"
+                    rel="nofollow sponsored noopener"
+                  >
+                    Uz veikalu ↗
+                  </a>
+                </article>
+              ),
             )}
           </div>
+        ) : (
+          <div className="filterempty">
+            Šai variantu kombinācijai
+            piedāvājums nav atrasts.
+          </div>
+        )}
+
+        {filteredOffers.length > 3 && (
+          <button
+            className="showalloffers"
+            onClick={() =>
+              setShowAll(
+                (value) => !value,
+              )
+            }
+          >
+            {showAll
+              ? 'Rādīt tikai Top 3'
+              : `Rādīt visus ${filteredOffers.length} piedāvājumus`}
+          </button>
         )}
       </section>
 
@@ -736,11 +949,6 @@ export default function ProductDetail({
 
           <h2>Pasaki savu cenu.</h2>
 
-          <p>
-            Mēs pārbaudīsim cenu un paziņosim,
-            kad tā sasniegs tavu slieksni.
-          </p>
-
           <label>
             Mērķa cena (€)
             <input
@@ -750,7 +958,11 @@ export default function ProductDetail({
               value={target}
               onChange={(
                 e: ChangeEvent<HTMLInputElement>,
-              ) => setTarget(e.target.value)}
+              ) =>
+                setTarget(
+                  e.target.value,
+                )
+              }
             />
           </label>
 
@@ -758,10 +970,12 @@ export default function ProductDetail({
             className="primary"
             onClick={createAlert}
           >
-            🔔 Izveidot brīdinājumu
+            🔔 Izveidot
           </button>
 
-          {alertMsg && <small>{alertMsg}</small>}
+          {alertMsg && (
+            <small>{alertMsg}</small>
+          )}
         </div>
       </section>
     </div>
