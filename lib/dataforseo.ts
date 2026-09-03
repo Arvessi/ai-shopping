@@ -345,13 +345,13 @@ export function mapSellerOffers(json: Json): OfferView[] {
   }
 
   const raw = (task.result || []).flatMap((result: Json) => flattenMerchant(result?.items || []));
-  const offers = raw.filter((item) => directPrice(item) > 0).map(toMerchantOffer);
+  const offers = raw.filter((item: RawItem) => directPrice(item) > 0).map(toMerchantOffer);
   if (!offers.length) return [];
 
-  const totals = offers.map((offer) => offer.totalPrice);
+  const totals = offers.map((offer: Omit<OfferView, 'dealScore' | 'isCheapest' | 'isBestOverall'>) => offer.totalPrice);
   const min = Math.min(...totals);
   const max = Math.max(...totals);
-  const scored: OfferView[] = offers.map((offer, index) => ({
+  const scored: OfferView[] = offers.map((offer: Omit<OfferView, 'dealScore' | 'isCheapest' | 'isBestOverall'>, index: number) => ({
     ...offer,
     dealScore: offerScore(offer.totalPrice, min, max, offer.sellerRating, offer.deliveryMessage, index),
     isCheapest: offer.totalPrice === min,
