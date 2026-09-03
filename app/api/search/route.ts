@@ -19,7 +19,7 @@ function authHeader() {
 type DfsOffer = {
   title?: string;
   domain?: string;
-  url?: string | null;
+  url?: string;
   price?: number;
   old_price?: number;
   currency?: string;
@@ -27,8 +27,6 @@ type DfsOffer = {
   product_images?: string[];
   seller?: string;
   product_id?: string;
-  shopping_url?: string;
-  shop_ad_aclk?: string;
 
   rating?: {
     value?: number | string;
@@ -66,25 +64,25 @@ type ProductResult = {
   }[];
 };
 
-async function postTask(keyword: string, auth: string) {
-  const googleUrl =
-    `https://www.google.com/search?` +
-    `tbm=shop` +
-    `&q=${encodeURIComponent(keyword)}` +
-    `&hl=lv` +
-    `&gl=lv`;
-
+async function postTask(
+  keyword: string,
+  auth: string
+) {
   const response = await fetch(
     `${API_URL}/task_post`,
     {
       method: 'POST',
       headers: {
         Authorization: auth,
-        'Content-Type': 'application/json',
+        'Content-Type':
+          'application/json',
       },
       body: JSON.stringify([
         {
-          url: googleUrl,
+          language_code: 'en',
+          location_code: 2203,
+          keyword,
+          depth: 20,
           priority: 1,
         },
       ]),
@@ -108,7 +106,8 @@ async function postTask(keyword: string, auth: string) {
     );
   }
 
-  const task = json?.tasks?.[0];
+  const task =
+    json?.tasks?.[0];
 
   if (!task) {
     throw new Error(
@@ -116,7 +115,9 @@ async function postTask(keyword: string, auth: string) {
     );
   }
 
-  if (task.status_code >= 40000) {
+  if (
+    task.status_code >= 40000
+  ) {
     throw new Error(
       task.status_message ||
         'DataForSEO rejected the task.'
@@ -125,15 +126,16 @@ async function postTask(keyword: string, auth: string) {
 
   if (!task.id) {
     throw new Error(
-      task.status_message ||
-        'DataForSEO did not return a valid task id.'
+      'DataForSEO did not return a valid task id.'
     );
   }
 
   return {
     taskId: String(task.id),
-    statusCode: task.status_code,
-    statusMessage: task.status_message,
+    statusCode:
+      task.status_code,
+    statusMessage:
+      task.status_message,
   };
 }
 
@@ -146,7 +148,6 @@ async function getTask(
       taskId
     )}`,
     {
-      method: 'GET',
       headers: {
         Authorization: auth,
       },
@@ -154,7 +155,8 @@ async function getTask(
     }
   );
 
-  const json = await response.json();
+  const json =
+    await response.json();
 
   return {
     ok: response.ok,
@@ -164,7 +166,7 @@ async function getTask(
 
 function getImage(
   item: DfsOffer
-): string | undefined {
+) {
   return (
     item.product_images?.[0] ||
     item.image_url ||
@@ -174,34 +176,18 @@ function getImage(
 
 function getUrl(
   item: DfsOffer
-): string {
-  if (
+) {
+  return (
     item.url &&
     item.url !== '#'
-  ) {
-    return item.url;
-  }
-
-  if (
-    item.shopping_url &&
-    item.shopping_url !== '#'
-  ) {
-    return item.shopping_url;
-  }
-
-  if (
-    item.shop_ad_aclk &&
-    item.shop_ad_aclk !== '#'
-  ) {
-    return item.shop_ad_aclk;
-  }
-
-  return '#';
+      ? item.url
+      : '#'
+  );
 }
 
 function calculateDealScores(
   items: DfsOffer[]
-): number[] {
+) {
   const prices = items
     .map((item) => item.price)
     .filter(
@@ -215,18 +201,23 @@ function calculateDealScores(
     return items.map(() => 60);
   }
 
-  const minPrice = Math.min(...prices);
-  const maxPrice = Math.max(...prices);
+  const minPrice =
+    Math.min(...prices);
+
+  const maxPrice =
+    Math.max(...prices);
 
   return items.map(
     (item, index) => {
       const price =
-        item.price ?? maxPrice;
+        item.price ??
+        maxPrice;
 
-      // Price competitiveness: 0–30
       let priceScore = 0;
 
-      if (maxPrice > minPrice) {
+      if (
+        maxPrice > minPrice
+      ) {
         priceScore =
           ((maxPrice - price) /
             (maxPrice - minPrice)) *
@@ -235,7 +226,6 @@ function calculateDealScores(
         priceScore = 30;
       }
 
-      // Real discount: 0–15
       let discountScore = 0;
 
       if (
@@ -255,32 +245,34 @@ function calculateDealScores(
           );
       }
 
-      // Rating: 0–10
       let ratingScore = 0;
 
       if (
         item.rating?.value !==
           undefined
       ) {
-        const rating = Number(
-          item.rating.value
-        );
+        const rating =
+          Number(
+            item.rating.value
+          );
 
         const maxRating =
-          item.rating.rating_max ||
-          5;
+          item.rating
+            .rating_max || 5;
 
         if (
-          Number.isFinite(rating) &&
+          Number.isFinite(
+            rating
+          ) &&
           maxRating > 0
         ) {
           ratingScore =
-            (rating / maxRating) *
+            (rating /
+              maxRating) *
             10;
         }
       }
 
-      // Small relevance bonus.
       const relevanceScore =
         Math.max(
           0,
@@ -317,7 +309,9 @@ function mapResults(
   }
 
   if (
-    task.status_code >= 40000
+    task.status_code >= 40000 &&
+    task.status_code !== 40601 &&
+    task.status_code !== 40602
   ) {
     throw new Error(
       task.status_message ||
@@ -333,7 +327,8 @@ function mapResults(
   }
 
   const items =
-    (result.items ?? []) as DfsOffer[];
+    (result.items ??
+      []) as DfsOffer[];
 
   const filtered =
     items.filter(
@@ -356,7 +351,7 @@ function mapResults(
         'Product';
 
       const price =
-        item.price ?? 0;
+        item.price || 0;
 
       const currency =
         item.currency ||
@@ -373,7 +368,7 @@ function mapResults(
         item.domain ||
         'Merchant';
 
-      const dealScore =
+      const score =
         scores[index];
 
       const shipping =
@@ -400,7 +395,8 @@ function mapResults(
 
         currency,
 
-        dealScore,
+        dealScore:
+          score,
 
         image,
 
@@ -412,13 +408,14 @@ function mapResults(
 
             shipping:
               typeof shipping ===
-              'number'
+                'number'
                 ? shipping
                 : 0,
 
             currency,
 
-            dealScore,
+            dealScore:
+              score,
 
             productTitle:
               title,
@@ -470,11 +467,8 @@ export async function GET(
 
   try {
     /*
-     * =====================================================
-     * EXISTING TASK
-     * =====================================================
+     * Existing task
      */
-
     if (taskId) {
       const { ok, json } =
         await getTask(
@@ -482,10 +476,12 @@ export async function GET(
           auth
         );
 
+      const task =
+        json?.tasks?.[0];
+
       /*
-       * DataForSEO can temporarily
-       * respond with 40401 while the
-       * task is propagating.
+       * Task temporarily unavailable.
+       * Continue polling.
        */
       if (
         !ok &&
@@ -501,9 +497,6 @@ export async function GET(
             'Task In Queue.',
         });
       }
-
-      const task =
-        json?.tasks?.[0];
 
       if (!task) {
         return NextResponse.json({
@@ -541,7 +534,7 @@ export async function GET(
       }
 
       /*
-       * Task completed.
+       * Results ready.
        */
       if (
         statusCode === 20000 &&
@@ -564,7 +557,7 @@ export async function GET(
       }
 
       /*
-       * Actual DataForSEO error.
+       * Real error.
        */
       if (
         statusCode >= 40000
@@ -584,9 +577,6 @@ export async function GET(
         );
       }
 
-      /*
-       * Unknown/in-progress.
-       */
       return NextResponse.json({
         pending: true,
         taskId,
@@ -597,11 +587,8 @@ export async function GET(
     }
 
     /*
-     * =====================================================
-     * NEW SEARCH
-     * =====================================================
+     * New search.
      */
-
     if (!q) {
       return NextResponse.json(
         {
