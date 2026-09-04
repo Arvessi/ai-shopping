@@ -1,8 +1,11 @@
+export type CollectorSourceKind = "merchant-feed" | "sitemap" | "catalog-adapter" | "discovery-fallback";
+
 export type CollectorStore = {
   slug: string;
   name: string;
   origin: string;
   country: "LV" | "LT" | "EE" | "DE" | "PL" | "EU";
+  feedUrls?: string[];
   sitemapUrls: string[];
   productUrlHints?: string[];
   crawlDelayMs?: number;
