@@ -8,8 +8,13 @@ import {
   discoverShoppingLive,
   mapShoppingCandidates,
 } from '@/lib/canonical/dataforseo-client';
+import { discoverLatvianStoreCandidates } from '@/lib/canonical/store-discovery';
 
 export const maxDuration = 30;
+
+function coverage(results: Awaited<ReturnType<typeof searchCanonicalCatalog>>) {
+  return Math.max(0, ...results.map((product) => product.storesCount || 0));
+}
 
 export async function POST(request: Request) {
   try {
@@ -52,32 +57,45 @@ export async function POST(request: Request) {
     let results = await searchCanonicalCatalog(q);
     let source = 'canonical-catalog';
     let liveCandidateCount = 0;
+    let lvStoreCandidateCount = 0;
 
-    // The canonical catalog stays the source of truth, but an empty catalog must
-    // not mean an empty user experience. Use DataForSEO's synchronous Live SERP
-    // request as an immediate fallback, ingest what we can validate, then query
-    // the canonical catalog again. The slower Merchant task remains background
-    // enrichment only.
-    if (!results.length) {
-      try {
-        const liveJson = await discoverShoppingLive(q);
-        const liveCandidates = mapShoppingCandidates(liveJson);
-        liveCandidateCount = liveCandidates.length;
+    // A thin catalog is expanded immediately from two independent discovery paths:
+    // Google Shopping live results and targeted searches across approved Latvian stores.
+    // Both paths feed the same canonical catalog; neither bypasses validation.
+    if (!results.length || coverage(results) < 5) {
+      const [liveResult, storeResult] = await Promise.allSettled([
+        discoverShoppingLive(q).then(mapShoppingCandidates),
+        discoverLatvianStoreCandidates(q),
+      ]);
 
-        if (liveCandidates.length) {
-          await ingestCandidates(liveCandidates);
-          results = await searchCanonicalCatalog(q);
-          if (results.length) source = 'canonical-live';
+      const liveCandidates =
+        liveResult.status === 'fulfilled' ? liveResult.value : [];
+      const storeCandidates =
+        storeResult.status === 'fulfilled' ? storeResult.value : [];
+
+      liveCandidateCount = liveCandidates.length;
+      lvStoreCandidateCount = storeCandidates.length;
+
+      if (liveResult.status === 'rejected') {
+        console.error('CENIQ live shopping discovery:', liveResult.reason);
+      }
+      if (storeResult.status === 'rejected') {
+        console.error('CENIQ Latvian store discovery:', storeResult.reason);
+      }
+
+      const discovered = [...liveCandidates, ...storeCandidates];
+      if (discovered.length) {
+        await ingestCandidates(discovered);
+        results = await searchCanonicalCatalog(q);
+        if (results.length) {
+          source = storeCandidates.length
+            ? 'canonical-lv-stores'
+            : 'canonical-live';
         }
-      } catch (liveError) {
-        console.error('CENIQ live shopping fallback:', liveError);
       }
     }
 
-    const bestCoverage = Math.max(
-      0,
-      ...results.map((product) => product.storesCount || 0),
-    );
+    const bestCoverage = coverage(results);
     const bestVariants = Math.max(
       0,
       ...results.map((product) => product.catalogVariants?.length || 0),
@@ -93,6 +111,7 @@ export async function POST(request: Request) {
       source,
       cached: source === 'canonical-catalog',
       liveCandidateCount,
+      lvStoreCandidateCount,
       enrichment: {
         enabled: Boolean(job),
         query: q,
