@@ -38,10 +38,11 @@ export function canonicalizeMerchantProductTitle(rawTitle: string, explicitBrand
 
   // Do not collapse accessories into their parent device family.
   if (!ACCESSORY.test(title)) {
-    const iphone = title.match(/\b(?:Apple\s+)?iPhone\s+(\d{1,2})(?:\s+(Pro\s+Max|Pro|Plus|Air|Mini|SE))?\b/i);
+    const iphone = title.match(/\b(?:Apple\s+)?iPhone\s+(\d{1,2})(?:\s*(e)\b|\s+(Pro\s+Max|Pro|Plus|Air|Mini|SE)\b)?/i);
     if (iphone) {
-      const modifier = iphone[2]
-        ? iphone[2]
+      const rawModifier = iphone[2] ? 'e' : iphone[3];
+      const modifier = rawModifier
+        ? rawModifier
             .replace(/\s+/g, ' ')
             .replace(/\bpro\b/i, 'Pro')
             .replace(/\bmax\b/i, 'Max')
@@ -51,7 +52,7 @@ export function canonicalizeMerchantProductTitle(rawTitle: string, explicitBrand
             .replace(/\bse\b/i, 'SE')
         : '';
       return {
-        title: `Apple iPhone ${iphone[1]}${modifier ? ` ${modifier}` : ''}`,
+        title: `Apple iPhone ${iphone[1]}${modifier === 'e' ? 'e' : modifier ? ` ${modifier}` : ''}`,
         brand: 'Apple',
       };
     }
