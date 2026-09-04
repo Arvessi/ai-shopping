@@ -14,6 +14,7 @@ export async function fetchText(url: string, timeoutMs = 15_000): Promise<string
       },
       redirect: "follow",
       signal: controller.signal,
+      cache: "no-store",
     });
     if (!response.ok) throw new Error(`${response.status} ${response.statusText} for ${url}`);
     return await response.text();
@@ -24,7 +25,7 @@ export async function fetchText(url: string, timeoutMs = 15_000): Promise<string
 
 export async function discoverSitemapsFromRobots(origin: string): Promise<string[]> {
   const robotsUrl = new URL("/robots.txt", origin).toString();
-  const robots = await fetchText(robotsUrl);
+  const robots = await fetchText(robotsUrl, 8_000);
   return [...robots.matchAll(/^\s*Sitemap:\s*(https?:\/\/\S+)\s*$/gim)]
     .map((match) => match[1].trim())
     .filter((url) => sameOrigin(url, origin));
@@ -53,7 +54,7 @@ export async function expandSitemaps(
     if (visited.has(sitemapUrl) || !sameOrigin(sitemapUrl, store.origin)) continue;
     visited.add(sitemapUrl);
 
-    const xml = await fetchText(sitemapUrl);
+    const xml = await fetchText(sitemapUrl, 10_000);
     const parsed = parseSitemapXml(xml);
     if (parsed.kind === "index") {
       for (const entry of parsed.entries) {
