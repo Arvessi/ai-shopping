@@ -9,7 +9,8 @@ export const maxDuration = 60;
 export async function GET(request: Request) {
   const secret = process.env.CRON_SECRET;
   const auth = request.headers.get('authorization');
-  if (!secret || auth !== `Bearer ${secret}`) {
+  const isLocalDev = process.env.NODE_ENV !== 'production';
+  if (!isLocalDev && (!secret || auth !== `Bearer ${secret}`)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -46,6 +47,8 @@ export async function GET(request: Request) {
     attempts: sync.attempts,
     durationMs: Date.now() - startedAt,
     tavilyCalls: 0,
-    note: 'v2 manual sync uses feed/sitemap handlers only; discovery fallback is disabled here.',
+    note: isLocalDev
+      ? 'Local dev sync: auth bypassed only outside production; Tavily is disabled.'
+      : 'Production sync: CRON_SECRET required; Tavily is disabled.',
   });
 }
