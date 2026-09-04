@@ -10,7 +10,20 @@ const ALLOWED_QUERIES = new Set([
   "Lenovo Legion 5",
 ]);
 
+function isAuthorized(request: NextRequest): boolean {
+  const expected = process.env.DISCOVERY_DEBUG_TOKEN;
+  if (!expected) return false;
+  const provided = request.headers.get("x-ceniq-debug-token");
+  return Boolean(provided && provided === expected);
+}
+
 export async function GET(request: NextRequest) {
+  // Fail closed before any provider call. Without an explicit debug token this
+  // endpoint cannot consume Tavily/Brave credits, even if the preview URL leaks.
+  if (!isAuthorized(request)) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
   const q = request.nextUrl.searchParams.get("q")?.trim() ?? "";
   if (!ALLOWED_QUERIES.has(q)) {
     return NextResponse.json(
@@ -44,7 +57,7 @@ export async function GET(request: NextRequest) {
     creditSafety: {
       callsThisRequest: 1,
       maxResults: 20,
-      note: "This endpoint allows only one whitelisted benchmark query per request.",
+      note: "One authenticated request performs at most one basic discovery call.",
     },
   });
 }
