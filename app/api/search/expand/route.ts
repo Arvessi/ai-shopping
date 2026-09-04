@@ -11,6 +11,7 @@ import { normalizeText } from '@/lib/canonical/domain';
 import type { ProductResult } from '@/lib/types';
 
 export const maxDuration = 45;
+const MAX_INGEST_PER_EXPANSION = 80;
 
 function coverage(results: ProductResult[]) {
   return Math.max(0, ...results.map((product) => product.storesCount || 0));
@@ -62,6 +63,27 @@ function mergeProducts(...groups: ProductResult[][]) {
   return Array.from(byId.values());
 }
 
+function prioritizeCandidates<T extends { merchant: { domain?: string }; sourceKey: string }>(storeCandidates: T[], liveCandidates: T[]) {
+  const output: T[] = [];
+  const seen = new Set<string>();
+  const queues = [storeCandidates, liveCandidates];
+
+  // Interleave sources/domains instead of letting one provider or merchant consume the
+  // whole write budget. This improves store coverage while keeping the request bounded.
+  while (output.length < MAX_INGEST_PER_EXPANSION && queues.some((queue) => queue.length)) {
+    for (const queue of queues) {
+      const candidate = queue.shift();
+      if (!candidate) continue;
+      const key = `${candidate.merchant.domain || ''}|${candidate.sourceKey}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      output.push(candidate);
+      if (output.length >= MAX_INGEST_PER_EXPANSION) break;
+    }
+  }
+  return output;
+}
+
 export async function POST(request: Request) {
   try {
     if (!databaseConfigured()) return NextResponse.json({ error: 'Datubāze nav konfigurēta.' }, { status: 503 });
@@ -84,13 +106,12 @@ export async function POST(request: Request) {
     if (liveResult.status === 'rejected') console.error('CENIQ expansion live:', liveResult.reason);
     if (storeResult.status === 'rejected') console.error('CENIQ expansion stores:', storeResult.reason);
 
-    const discovered = [...storeCandidates, ...liveCandidates].slice(0, 140);
-    const ingestResults = discovered.length ? await ingestCandidates(discovered) : [];
+    const discovered = prioritizeCandidates([...storeCandidates], [...liveCandidates]);
+    // Search-time ingestion does not need to write a price-history observation for every
+    // candidate. Skipping that extra insert keeps expansion responsive; scheduled refreshes
+    // still record historical observations.
+    const ingestResults = discovered.length ? await ingestCandidates(discovered, { observe: false }) : [];
 
-    // Do not rely only on searchCanonicalCatalog finding the new family by query tokens.
-    // For broad/generic searches the merchant title may not literally contain words like
-    // "laptop" or "headphones". Families created by this discovery request are relevant
-    // evidence and must be eligible for the response immediately.
     const [catalogMatches, freshlyDiscovered] = await Promise.all([
       searchCatalogWithFallback(q),
       loadDiscoveredFamilies(ingestResults),
@@ -108,6 +129,7 @@ export async function POST(request: Request) {
       discoveryQueries,
       liveCandidateCount: liveCandidates.length,
       lvStoreCandidateCount: storeCandidates.length,
+      attemptedWrites: discovered.length,
       acceptedWrites,
       rejectedWrites,
       discoveredFamilies: freshlyDiscovered.length,
