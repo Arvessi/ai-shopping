@@ -3,7 +3,7 @@ import { getSessionUser } from '@/lib/auth';
 import { databaseConfigured, prisma } from '@/lib/db';
 import { isRestrictedShoppingQuery } from '@/lib/safety';
 import { ingestCandidates, searchCanonicalCatalog } from '@/lib/canonical/catalog';
-import { discoverShoppingLive, mapShoppingCandidates } from '@/lib/canonical/dataforseo-client';
+import { discoverShoppingLiveMany, mapShoppingCandidates } from '@/lib/canonical/dataforseo-client';
 import { discoverLatvianStoreCandidates } from '@/lib/canonical/store-discovery';
 import { shapeCanonicalResults } from '@/lib/canonical/result-shaping';
 import { expandDiscoveryQueries } from '@/lib/canonical/query-expansion';
@@ -36,14 +36,18 @@ export async function POST(request: Request) {
     let source = 'canonical-catalog';
     let liveCandidateCount = 0;
     let lvStoreCandidateCount = 0;
+    const discoveryQueries = expandDiscoveryQueries(q);
 
-    // Cold search: do one bounded discovery pass only. Full model/storage expansion is
-    // performed by /api/search/expand after the first results are already visible.
-    if (!results.length) {
-      const [liveResult, storeResult] = await Promise.allSettled([
-        discoverShoppingLive(q).then(mapShoppingCandidates),
-        discoverLatvianStoreCandidates(q),
-      ]);
+    const thin = !results.length || coverage(results) < 5 || variantCount(results) < 3 || results.length < 2;
+
+    if (thin) {
+      // The expensive per-store page crawl is only needed on a cold catalog. Once we
+      // already have results, expand models/storage through one batched live request.
+      // This keeps the first response comfortably below the browser timeout.
+      const livePromise = discoverShoppingLiveMany(discoveryQueries).then(mapShoppingCandidates);
+      const storePromise = !results.length ? discoverLatvianStoreCandidates(q) : Promise.resolve([]);
+      const [liveResult, storeResult] = await Promise.allSettled([livePromise, storePromise]);
+
       const liveCandidates = liveResult.status === 'fulfilled' ? liveResult.value : [];
       const storeCandidates = storeResult.status === 'fulfilled' ? storeResult.value : [];
       liveCandidateCount = liveCandidates.length;
@@ -52,7 +56,9 @@ export async function POST(request: Request) {
       if (liveResult.status === 'rejected') console.error('CENIQ live shopping discovery:', liveResult.reason);
       if (storeResult.status === 'rejected') console.error('CENIQ Latvian store discovery:', storeResult.reason);
 
-      const discovered = [...liveCandidates, ...storeCandidates];
+      // Keep the hot path bounded. The catalog persists everything, so later searches
+      // build on previous coverage instead of replacing it with a random subset.
+      const discovered = [...liveCandidates, ...storeCandidates].slice(0, 40);
       if (discovered.length) {
         await ingestCandidates(discovered);
         rawResults = await searchCanonicalCatalog(q);
@@ -63,8 +69,6 @@ export async function POST(request: Request) {
 
     const bestCoverage = coverage(results);
     const bestVariants = variantCount(results);
-    const discoveryQueries = expandDiscoveryQueries(q);
-    const needsExpansion = discoveryQueries.length > 1 && (bestCoverage < 5 || bestVariants < 3 || results.length < 2);
 
     return NextResponse.json({
       results,
@@ -88,7 +92,7 @@ export async function POST(request: Request) {
           variantAxes: Array.from(new Set((product.catalogVariants || []).flatMap((variant) => Object.keys(variant.attributes || {})))),
         })),
       },
-      expansion: { enabled: needsExpansion, query: q },
+      expansion: { enabled: false, query: q },
       enrichment: { enabled: false, query: q, jobId: null },
       message: !results.length ? 'CENIQ neatrada derigus veikalu piedavajumus siem meklesanas vardiem.' : undefined,
     });
