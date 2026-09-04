@@ -21,6 +21,22 @@ function meta(html: string, key: string): string | undefined {
   }
 }
 
+function h1(html: string): string | undefined {
+  const match = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
+  if (!match?.[1]) return undefined;
+  return decodeHtml(match[1].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim());
+}
+
+function plainText(html: string): string {
+  return decodeHtml(
+    html
+      .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " "),
+  );
+}
+
 function jsonLdBlocks(html: string): unknown[] {
   const out: unknown[] = [];
   const regex = /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
@@ -68,6 +84,17 @@ function numericPrice(value: unknown): number | undefined {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
+function lmtOneTimePrice(html: string): number | undefined {
+  const text = plainText(html);
+  const match = text.match(/Pērkot uzreiz[\s\S]{0,180}?(\d{1,5}(?:[.,]\d{1,2})?)\s*€/i);
+  return numericPrice(match?.[1]);
+}
+
+function lmtModel(html: string): string | undefined {
+  const text = plainText(html);
+  return text.match(/Modelis\s+([A-Z0-9][A-Z0-9._\/-]{4,})/i)?.[1];
+}
+
 const blockedCatalogTerms = [
   /\b(ammunition|firearm|rifle|shotgun|handgun|switchblade|taser|pepper spray|mace)\b/i,
   /\b(vape|e-cigarette|nicotine|cigarette|cigar)\b/i,
@@ -89,10 +116,13 @@ export function parseProductPage(
   const product = productNode(html);
   const offer = firstOffer(product);
 
-  const title = String(product?.name ?? meta(html, "og:title") ?? "").trim();
+  const title = String(product?.name ?? meta(html, "og:title") ?? h1(html) ?? "").trim();
   const price = numericPrice(
-    offer?.price ?? offer?.lowPrice ?? meta(html, "product:price:amount") ?? meta(html, "og:price:amount"),
-  );
+    offer?.price ??
+      offer?.lowPrice ??
+      meta(html, "product:price:amount") ??
+      meta(html, "og:price:amount"),
+  ) ?? (store.slug === "lmt" ? lmtOneTimePrice(html) : undefined);
   const currency = String(
     offer?.priceCurrency ?? meta(html, "product:price:currency") ?? meta(html, "og:price:currency") ?? "EUR",
   ).toUpperCase();
@@ -108,6 +138,7 @@ export function parseProductPage(
 
   const brand = typeof product?.brand === "object" ? product.brand?.name : product?.brand;
   const gtin = product?.gtin13 ?? product?.gtin14 ?? product?.gtin12 ?? product?.gtin8 ?? product?.gtin;
+  const sku = product?.sku ? String(product.sku) : store.slug === "lmt" ? lmtModel(html) : undefined;
 
   return {
     merchantSlug: store.slug,
@@ -120,7 +151,7 @@ export function parseProductPage(
     imageUrl: imageUrl || undefined,
     availability: offer?.availability ? String(offer.availability) : undefined,
     brand: brand ? String(brand) : undefined,
-    sku: product?.sku ? String(product.sku) : undefined,
+    sku,
     gtin: gtin ? String(gtin) : undefined,
     category: product?.category ? String(product.category) : undefined,
     fetchedAt: new Date().toISOString(),
