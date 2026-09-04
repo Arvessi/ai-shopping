@@ -222,7 +222,8 @@ test("orchestrator stops after feed success and never spends discovery fallback"
 
 test("orchestrator falls through empty sources until a later source succeeds", async () => {
   const attempted: string[] = [];
-  const result = await syncCollectorStore(store, {
+  const sitemapStore: CollectorStore = { ...store, sitemapUrls: ["https://shop.example/sitemap.xml"] };
+  const result = await syncCollectorStore(sitemapStore, {
     "merchant-feed": async () => {
       attempted.push("feed");
       return { source: "merchant-feed", offers: [] };
