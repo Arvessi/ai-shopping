@@ -2,7 +2,7 @@ import { extractAttributes, providerTaskState, type IdentifierCandidate, type No
 import { canonicalizeMerchantProductTitle } from './title-normalization';
 
 const API_BASE = 'https://api.dataforseo.com/v3';
-const REQUEST_TIMEOUT_MS = Math.min(15_000, Math.max(3_000, Number(process.env.DATAFORSEO_TIMEOUT_MS || 10_000)));
+const REQUEST_TIMEOUT_MS = Math.min(20_000, Math.max(3_000, Number(process.env.DATAFORSEO_TIMEOUT_MS || 12_000)));
 
 type Json = Record<string, any>;
 
@@ -67,9 +67,19 @@ export async function getShoppingTask(taskId: string) {
 }
 
 export async function discoverShoppingLive(keyword: string) {
+  return discoverShoppingLiveMany([keyword]);
+}
+
+export async function discoverShoppingLiveMany(keywords: string[]) {
+  const clean = Array.from(new Set(keywords.map((keyword) => keyword.trim()).filter(Boolean))).slice(0, 10);
   return request('/serp/google/organic/live/advanced', {
     method: 'POST',
-    body: JSON.stringify([{ ...taskPayload(keyword)[0], device: 'desktop', os: 'windows', search_param: '&udm=28' }]),
+    body: JSON.stringify(clean.map((keyword) => ({
+      ...taskPayload(keyword)[0],
+      device: 'desktop',
+      os: 'windows',
+      search_param: '&udm=28',
+    }))),
   });
 }
 
@@ -128,7 +138,7 @@ function walkItems(value: unknown, output: Json[]) {
 
 export function mapShoppingCandidates(json: Json): NormalizedOfferCandidate[] {
   const raw: Json[] = [];
-  walkItems(json.tasks?.[0]?.result || [], raw);
+  for (const task of json.tasks || []) walkItems(task?.result || [], raw);
   const seen = new Set<string>();
   const output: NormalizedOfferCandidate[] = [];
   for (const item of raw) {
@@ -149,7 +159,7 @@ export function mapShoppingCandidates(json: Json): NormalizedOfferCandidate[] {
       title: identity.title, brand: identity.brand, model: item.model ? String(item.model) : undefined,
       category: item.category ? String(item.category) : undefined, description: item.description ? String(item.description) : originalTitle,
       url, image: image ? { url: String(image), source: 'dataforseo', provenance: 'variant', confidence: 0.75 } : undefined,
-      identifiers: identifiers(item), attributes: extractAttributes(originalTitle), price: amount,
+      identifiers: identifiers(item), attributes: extractAttributes(`${originalTitle} ${String(item.description || '')}`), price: amount,
       shippingPrice: Number.isFinite(shippingRaw) && shippingRaw >= 0 ? shippingRaw : undefined,
       currency: String(item.price?.currency || item.currency || 'EUR'), availability: item.product_availability || item.availability,
       evidence: {
