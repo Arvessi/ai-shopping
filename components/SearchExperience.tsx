@@ -5,6 +5,7 @@ import {
   FormEvent,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import ProductCard from './ProductCard';
@@ -33,7 +34,7 @@ const fallbackPopular = [
 ];
 
 const SEARCH_STATE_KEY =
-  'ceniq-search-state-v34';
+  'ceniq-search-state-v35';
 
 type SearchMode =
   | 'search'
@@ -88,6 +89,9 @@ export default function SearchExperience() {
     useState<SortMode>(
       'coverage',
     );
+
+  const enrichVersion =
+    useRef(0);
 
   useEffect(() => {
     fetch('/api/popular')
@@ -284,10 +288,142 @@ export default function SearchExperience() {
     );
   }
 
+  async function runMerchantEnrichment(
+    searchQuery: string,
+    version: number,
+  ) {
+    try {
+      setStatus(
+        'Rezultāti ir gatavi — CENIQ fonā meklē vēl veikalus, variantus un bildes…',
+      );
+
+      const start = await fetch(
+        '/api/merchant/enrich',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type':
+              'application/json',
+          },
+          body: JSON.stringify({
+            q: searchQuery,
+          }),
+        },
+      );
+
+      const startData =
+        await start.json();
+
+      if (
+        !start.ok ||
+        !startData.taskId
+      ) {
+        setStatus('');
+        return;
+      }
+
+      let taskId =
+        String(startData.taskId);
+      let stage =
+        String(
+          startData.stage ||
+            'products',
+        );
+
+      for (
+        let attempt = 0;
+        attempt < 40;
+        attempt += 1
+      ) {
+        if (
+          enrichVersion.current !==
+          version
+        ) {
+          return;
+        }
+
+        await new Promise(
+          (resolve) =>
+            window.setTimeout(
+              resolve,
+              1500,
+            ),
+        );
+
+        const poll = await fetch(
+          `/api/merchant/enrich?taskId=${encodeURIComponent(
+            taskId,
+          )}&stage=${encodeURIComponent(
+            stage,
+          )}&q=${encodeURIComponent(
+            searchQuery,
+          )}`,
+          {
+            cache: 'no-store',
+          },
+        );
+
+        const data =
+          await poll.json();
+
+        if (!poll.ok) {
+          setStatus('');
+          return;
+        }
+
+        if (
+          Array.isArray(
+            data.results,
+          ) &&
+          data.results.length
+        ) {
+          setResults(
+            data.results,
+          );
+
+          setSource(
+            data.source ||
+              'google-shopping-merchant',
+          );
+
+          setNotice('');
+        }
+
+        if (!data.pending) {
+          setStatus('');
+          return;
+        }
+
+        taskId = String(
+          data.taskId ||
+            taskId,
+        );
+
+        stage = String(
+          data.stage ||
+            stage,
+        );
+
+        setStatus(
+          stage === 'info'
+            ? 'Atrasti produkti — CENIQ tagad pārbauda pārdevējus, bildes un detalizētus datus…'
+            : 'Rezultāti ir gatavi — CENIQ fonā paplašina Google Shopping katalogu…',
+        );
+      }
+
+      setStatus('');
+    } catch {
+      setStatus('');
+    }
+  }
+
   async function runSearch(
     searchQuery: string,
     searchMode: SearchMode,
   ) {
+    const version =
+      ++enrichVersion.current;
+
     setStatus(
       'CENIQ pārbauda katalogu un veikalus…',
     );
@@ -299,7 +435,7 @@ export default function SearchExperience() {
       window.setTimeout(
         () =>
           controller.abort(),
-        55000,
+        20000,
       );
 
     try {
@@ -346,6 +482,15 @@ export default function SearchExperience() {
         data.source || '',
       );
 
+      if (
+        data.enrichment?.enabled
+      ) {
+        void runMerchantEnrichment(
+          searchQuery,
+          version,
+        );
+      }
+
       setSortMode(
         'coverage',
       );
@@ -358,7 +503,11 @@ export default function SearchExperience() {
           : '',
       );
 
-      setStatus('');
+      if (
+        !data.enrichment?.enabled
+      ) {
+        setStatus('');
+      }
 
       if (
         nextResults.length
@@ -487,19 +636,19 @@ export default function SearchExperience() {
   }
 
   const sourceLabel =
-    source ===
-    'ceniq-catalog'
+    source === 'ceniq-market'
       ? 'CENIQ katalogs'
-      : source ===
-          'ceniq-hybrid'
-        ? 'CENIQ katalogs + veikalu fallback'
-        : source ===
-            'approved-store-fallback'
-          ? 'Apstiprinātie LV veikali'
-          : source ===
-              'ceniq-cache-v34'
-            ? 'CENIQ kešatmiņa'
-            : '';
+      : source === 'ceniq-live'
+        ? 'Ātrais veikalu meklējums'
+        : source === 'ceniq-cache-v35'
+          ? 'CENIQ kešatmiņa'
+          : source === 'google-shopping-products'
+            ? 'Google Shopping katalogs'
+            : source === 'google-shopping-product-info'
+              ? 'Google Shopping + pārdevēji'
+              : source === 'google-shopping-merchant'
+                ? 'Google Shopping katalogs'
+                : '';
 
   return (
     <>
