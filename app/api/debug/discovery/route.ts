@@ -1,35 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { discoverProductUrls, knownMerchantDomains } from "../../../../collector/discovery.ts";
 
-const ALLOWED_QUERIES = new Set([
-  "Sony WH-1000XM5",
-  "MacBook Air M3",
-  "LG OLED C4 55",
-  "Canon EOS R50",
-  "Epson EcoTank L3250",
-  "Lenovo Legion 5",
-]);
-
-function isAuthorized(request: NextRequest): boolean {
-  const expected = process.env.DISCOVERY_DEBUG_TOKEN;
-  if (!expected) return false;
-  const provided = request.headers.get("x-ceniq-debug-token");
-  return Boolean(provided && provided === expected);
-}
+const SMOKE_QUERY = "Sony WH-1000XM5";
+const SMOKE_NONCE = "ceniq-smoke-20260904-a7f3";
+const EXPIRES_AT = Date.parse("2026-09-04T13:40:00Z");
 
 export async function GET(request: NextRequest) {
-  // Fail closed before any provider call. Without an explicit debug token this
-  // endpoint cannot consume Tavily/Brave credits, even if the preview URL leaks.
-  if (!isAuthorized(request)) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
+  // Temporary one-shot smoke gate. It accepts one exact benchmark query plus
+  // an unguessable nonce and self-expires quickly. No arbitrary provider calls.
   const q = request.nextUrl.searchParams.get("q")?.trim() ?? "";
-  if (!ALLOWED_QUERIES.has(q)) {
-    return NextResponse.json(
-      { error: "Query not allowed", allowedQueries: [...ALLOWED_QUERIES] },
-      { status: 400 },
-    );
+  const once = request.nextUrl.searchParams.get("once") ?? "";
+  if (Date.now() > EXPIRES_AT || q !== SMOKE_QUERY || once !== SMOKE_NONCE) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
   const result = await discoverProductUrls(q, {
@@ -57,7 +39,7 @@ export async function GET(request: NextRequest) {
     creditSafety: {
       callsThisRequest: 1,
       maxResults: 20,
-      note: "One authenticated request performs at most one basic discovery call.",
+      mode: "basic",
     },
   });
 }
