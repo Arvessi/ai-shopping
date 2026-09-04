@@ -60,42 +60,44 @@ export default function ProductCard({product,query=''}:{product:ProductResult;qu
   const score=selectedScore(selectedOffers); const selectedBest=selectedOffers[0];
   const currentImage=selectedCatalogVariant?.image||selectedOffers.find(o=>Boolean(o.image))?.image||product.familyImage||product.image||'';
   const productHref=`/product/${encodeURIComponent(product.id)}${selectedCatalogVariant?.id?`?variantId=${encodeURIComponent(selectedCatalogVariant.id)}`:''}`;
-  const visibleOffers=showAll?selectedOffers:selectedOffers.slice(0,4);
+  const visibleOffers=showAll?selectedOffers:selectedOffers.slice(0,5);
 
   function chooseVariant(axis:keyof VariantAttributes,value:string){ const candidate=chooseBestVariant(catalogVariants,selected,axis,value); if(!candidate) return; setSelected(candidate.attributes); setShowAll(false); }
   function offerHref(offer:OfferView){ if(offer.id) return `/api/out?offerId=${encodeURIComponent(offer.id)}`; return offer.url||productHref; }
-  function openAnalysis(){ window.location.assign(productHref); }
   async function save(e:MouseEvent){ e.preventDefault(); e.stopPropagation(); if(!product.id||product.id.startsWith('family:')){ window.location.href='/login'; return; } setSaving(true); const response=await fetch('/api/wishlist',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({familyId:product.id,variantId:selectedCatalogVariant?.id})}); if(response.status===401) window.location.href='/login'; else if(response.ok) setSaved(true); setSaving(false); }
 
-  return <article className="compare-row">
-    <div className="compare-media">
-      {currentImage?<img src={currentImage} alt={product.title} loading="lazy"/>:<div className="compare-image-fallback"><span>C</span><small>Nav attēla</small></div>}
-    </div>
-
-    <div className="compare-product">
-      <div className="compare-kicker"><span>{product.brand||'Produkts'}</span><span>{allStores} {allStores===1?'veikals':'veikali'} kopā</span></div>
-      <Link href={productHref} className="compare-title">{product.title}</Link>
-
-      {AXIS_ORDER.some(axis=>Boolean(axes[axis]?.length))&&<div className="compare-variants">
-        {AXIS_ORDER.map(axis=>{ const options=axes[axis]; if(!options||options.length<2) return null; return <div className="compare-axis" key={axis}><span>{AXIS_LABELS[axis]}</span><div>{options.map(option=><button type="button" key={option} className={selected[axis]===option?'active':''} onClick={()=>chooseVariant(axis,option)}>{option}</button>)}</div></div>; })}
-      </div>}
-
-      <div className="compare-summary">
-        <div><span>No</span><strong>{selectedBest?money(selectedBest.totalPrice,selectedBest.currency):'—'}</strong></div>
-        <div><span>Šim variantam</span><strong>{stores} {stores===1?'veikals':'veikali'}</strong></div>
-        <div><span>CENIQ</span><strong className={score>0?'has-score':''}>{score>0?`${score}/100`:'—'}</strong></div>
+  return <article className="market-sheet">
+    <div className="market-identity">
+      <div className="market-image">
+        {currentImage?<img src={currentImage} alt={product.title} loading="lazy"/>:<div className="market-image-fallback"><b>C</b><span>nav attēla</span></div>}
       </div>
-      <div className="compare-actions"><button type="button" onClick={openAnalysis}>Skatīt pilnu analīzi</button><button type="button" onClick={save} disabled={saving}>{saved?'♥ Saglabāts':'♡ Saglabāt'}</button></div>
+      <div className="market-copy">
+        <div className="market-overline"><span>{product.brand||'Produkts'}</span><i>{allStores} {allStores===1?'veikals':'veikali'} katalogā</i></div>
+        <Link href={productHref} className="market-title">{product.title}</Link>
+        {AXIS_ORDER.some(axis=>Boolean(axes[axis]?.length))&&<div className="market-variants">
+          {AXIS_ORDER.map(axis=>{ const options=axes[axis]; if(!options||options.length<2) return null; return <div className="market-axis" key={axis}><span>{AXIS_LABELS[axis]}</span><div>{options.map(option=><button type="button" key={option} className={selected[axis]===option?'active':''} onClick={()=>chooseVariant(axis,option)}>{option}</button>)}</div></div>; })}
+        </div>}
+      </div>
+      <aside className="market-price-block">
+        <span>Labākā cena</span>
+        <strong>{selectedBest?money(selectedBest.totalPrice,selectedBest.currency):'—'}</strong>
+        <small>{stores} {stores===1?'veikals':'veikali'} šim variantam{score>0?` · CENIQ ${score}/100`:''}</small>
+        <div className="market-quick-actions"><Link href={productHref}>Pilna analīze →</Link><button type="button" onClick={save} disabled={saving}>{saved?'♥':'♡'}</button></div>
+      </aside>
     </div>
 
-    <div className="compare-offers">
-      <div className="compare-offers-head"><div><span>Veikalu cenas</span><strong>{selectedOffers.length?`${selectedOffers.length} piedāvājumi`:'Nav piedāvājumu'}</strong></div>{selectedOffers.length>1&&<small>sakārtots pēc cenas</small>}</div>
-      {visibleOffers.length?<div className="compare-offer-list">{visibleOffers.map((offer,index)=><div className="compare-offer" key={offer.id||`${merchantKey(offer)}-${offer.totalPrice}-${index}`}>
-        <div className="compare-store"><b>{offer.merchant}</b><span>{availability(offer)}</span></div>
-        <div className="compare-price"><strong>{money(offer.totalPrice,offer.currency)}</strong>{offer.shippingKnown&&offer.shipping>0?<small>+ {money(offer.shipping,offer.currency)} piegāde</small>:null}</div>
-        <a href={offerHref(offer)} target="_blank" rel="nofollow sponsored noopener">Veikals ↗</a>
-      </div>)}</div>:<div className="compare-empty">Šim variantam vēl nav svaigu piedāvājumu.</div>}
-      {selectedOffers.length>4&&<button type="button" className="compare-more" onClick={()=>setShowAll(v=>!v)}>{showAll?'Rādīt mazāk':`Vēl ${selectedOffers.length-4} piedāvājumi`}</button>}
+    <div className="market-offers-section">
+      <div className="market-offers-title"><b>Cenu tirgus</b><span>{selectedOffers.length} {selectedOffers.length===1?'piedāvājums':'piedāvājumi'}</span></div>
+      {visibleOffers.length?<div className="market-offer-table">
+        <div className="market-offer-head"><span>Veikals</span><span>Pieejamība</span><span>Cena</span><span></span></div>
+        {visibleOffers.map((offer,index)=><div className="market-offer-row" key={offer.id||`${merchantKey(offer)}-${offer.totalPrice}-${index}`}>
+          <div className="market-merchant"><b>{offer.merchant}</b><small>{offer.merchantDomain||''}</small></div>
+          <div className="market-stock">{availability(offer)}</div>
+          <div className="market-offer-price"><b>{money(offer.totalPrice,offer.currency)}</b>{offer.shippingKnown&&offer.shipping>0?<small>+ {money(offer.shipping,offer.currency)} piegāde</small>:null}</div>
+          <a href={offerHref(offer)} target="_blank" rel="nofollow sponsored noopener">Atvērt ↗</a>
+        </div>)}
+      </div>:<div className="market-empty">Šim variantam vēl nav svaigu piedāvājumu.</div>}
+      {selectedOffers.length>5&&<button type="button" className="market-more" onClick={()=>setShowAll(v=>!v)}>{showAll?'Rādīt mazāk':`Rādīt vēl ${selectedOffers.length-5}`}</button>}
     </div>
   </article>;
 }
