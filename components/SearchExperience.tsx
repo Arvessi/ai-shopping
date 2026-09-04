@@ -34,7 +34,7 @@ const fallbackPopular = [
 ];
 
 const SEARCH_STATE_KEY =
-  'ceniq-search-state-v35';
+  'ceniq-search-state-canonical-v1';
 
 type SearchMode =
   | 'search'
@@ -384,7 +384,7 @@ export default function SearchExperience() {
 
           setSource(
             data.source ||
-              'google-shopping-merchant',
+              'canonical-enrichment',
           );
 
           setNotice('');
@@ -639,19 +639,11 @@ export default function SearchExperience() {
   }
 
   const sourceLabel =
-    source === 'ceniq-market'
+    source === 'canonical-catalog'
       ? 'CENIQ katalogs'
-      : source === 'ceniq-live'
-        ? 'Ātrais veikalu meklējums'
-        : source === 'ceniq-cache-v35'
-          ? 'CENIQ kešatmiņa'
-          : source === 'google-shopping-products'
-            ? 'Google Shopping katalogs'
-            : source === 'google-shopping-product-info'
-              ? 'Google Shopping + pārdevēji'
-              : source === 'google-shopping-merchant'
-                ? 'Google Shopping katalogs'
-                : '';
+      : source === 'canonical-enrichment'
+        ? 'CENIQ katalogs atjaunināts'
+        : '';
 
   return (
     <>

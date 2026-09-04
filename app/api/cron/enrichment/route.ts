@@ -13,6 +13,10 @@ export async function GET(request: Request) {
     where: { status: { in: ['queued', 'running'] } }, orderBy: { createdAt: 'asc' }, take: 8,
   });
   const results = await Promise.all(jobs.map(async (job) => {
+    if (job.deadlineAt <= new Date()) {
+      const expired = await pollEnrichment(job.id);
+      return { id: job.id, status: expired.status };
+    }
     if (job.status === 'queued') {
       const started = await startEnrichment(job.normalizedQuery, job.familyId || undefined);
       return { id: job.id, status: started.status };

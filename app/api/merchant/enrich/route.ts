@@ -29,7 +29,14 @@ export async function GET(request: Request) {
     if (!jobId) return NextResponse.json({ error: 'Trukst jobId.' }, { status: 400 });
     const result = await pollEnrichment(jobId);
     const pending = result.status === 'queued' || result.status === 'running';
-    return NextResponse.json({ ...result, pending, stage: pending ? 'products' : 'done', taskId: jobId, jobId }, { status: result.status === 'failed' ? 502 : 200 });
+    return NextResponse.json({
+      ...result,
+      pending,
+      stage: pending ? 'products' : 'done',
+      taskId: jobId,
+      jobId,
+      source: result.status === 'succeeded' ? 'canonical-enrichment' : undefined,
+    }, { status: result.status === 'failed' ? 502 : 200 });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Kataloga papildinasana neizdevas.', pending: false, status: 'failed' }, { status: 502 });
   }
