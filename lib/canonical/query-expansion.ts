@@ -26,11 +26,7 @@ function iphoneQueries(query: string) {
   const storages = modifier.toLowerCase().includes('pro') ? ['128GB', '256GB', '512GB', '1TB'] : ['128GB', '256GB', '512GB'];
   const expanded = [query];
 
-  if (!hasStorage(query)) {
-    expanded.push(...storages.map((storage) => `${base} ${storage}`));
-  }
-
-  // A plain generation search is a product-line browse: return the available sibling models too.
+  if (!hasStorage(query)) expanded.push(...storages.map((storage) => `${base} ${storage}`));
   if (!modifier) {
     expanded.push(
       `iPhone ${generation} Pro`,
@@ -57,6 +53,22 @@ function galaxyQueries(query: string) {
   return unique(expanded).slice(0, 8);
 }
 
+function genericQueries(query: string) {
+  const canonical = canonicalizeMerchantProductTitle(query).title;
+  const base = canonical || query;
+
+  // Generic discovery must work for the whole catalogue, not only the two phone
+  // families we use for testing. These are search-intent variants, not invented
+  // product variants, so they are safe for laptops, TVs, headphones, cameras, etc.
+  return unique([
+    query,
+    canonical,
+    `${base} cena`,
+    `${base} Latvija`,
+    `${base} price`,
+  ]).slice(0, 5);
+}
+
 export function expandDiscoveryQueries(query: string) {
   const value = query.trim();
   if (!value) return [];
@@ -67,8 +79,5 @@ export function expandDiscoveryQueries(query: string) {
   const galaxy = galaxyQueries(value);
   if (galaxy.length) return galaxy;
 
-  // For other products, do not invent variants. The canonical catalog can still discover
-  // them naturally from merchant titles and feeds.
-  const canonical = canonicalizeMerchantProductTitle(value).title;
-  return unique([value, canonical]).slice(0, 2);
+  return genericQueries(value);
 }
