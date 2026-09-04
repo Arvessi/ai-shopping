@@ -846,16 +846,20 @@ function scoreVariantOffers(
     offers.map((offer) => offer.merchantId),
   );
 
-  const min = Math.min(
-    ...offers.map((offer) => offer.price),
-  );
+  const sortedPrices = offers
+    .map((offer) => offer.price)
+    .filter((price) => Number.isFinite(price) && price > 0)
+    .sort((a, b) => a - b);
 
-  const max = Math.max(
-    ...offers.map((offer) => offer.price),
-  );
+  const middle = Math.floor(sortedPrices.length / 2);
+  const marketReference = sortedPrices.length % 2
+    ? sortedPrices[middle]
+    : (sortedPrices[middle - 1] + sortedPrices[middle]) / 2;
 
-  return offers.map((offer) => {
-    if (merchants.size < 2) {
+  const min = sortedPrices[0] || 0;
+
+  const scored = offers.map((offer) => {
+    if (merchants.size < 2 || !marketReference) {
       return {
         offer,
         dealScore: 0,
@@ -864,27 +868,27 @@ function scoreVariantOffers(
       };
     }
 
-    const pricePosition =
-      min === max
-        ? 0.5
-        : (max - offer.price) /
-          (max - min);
+    const relativeValue =
+      (marketReference - offer.price) / marketReference;
+
+    let score =
+      80 + relativeValue * 180;
 
     const trust =
       offer.merchant.trustScore;
 
-    let score =
-      55 + pricePosition * 36;
-
     if (trust != null) {
       score += Math.max(
-        -4,
-        Math.min(4, (trust - 4) * 4),
+        -3,
+        Math.min(3, (trust - 4) * 3),
       );
     }
 
+    if (merchants.size >= 3) score += 1;
+    if (merchants.size >= 5) score += 1;
+
     score = Math.round(
-      Math.max(45, Math.min(97, score)),
+      Math.max(55, Math.min(95, score)),
     );
 
     return {
@@ -895,6 +899,22 @@ function scoreVariantOffers(
       isBestOverall: false,
     };
   });
+
+  if (scored.length) {
+    let bestIndex = 0;
+
+    scored.forEach((item, index) => {
+      if (item.dealScore > scored[bestIndex].dealScore) {
+        bestIndex = index;
+      }
+    });
+
+    if (scored[bestIndex].dealScore > 0) {
+      scored[bestIndex].isBestOverall = true;
+    }
+  }
+
+  return scored;
 }
 
 export async function projectFamilyToLegacy(

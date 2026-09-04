@@ -750,22 +750,30 @@ function scoreOffer(
 ) {
   if (storeCount < 2) return 0;
 
-  const pricePosition =
-    maxTotal === minTotal
-      ? 0.5
-      : (maxTotal - total) / (maxTotal - minTotal);
+  // Score relative to the market level, not to an artificial 0..1 min/max scale.
+  // This keeps a €10 difference on an ~€880 phone close together instead of 90 vs 55.
+  const marketReference =
+    minTotal === maxTotal
+      ? total
+      : (minTotal + maxTotal) / 2;
 
-  let score = 55 + pricePosition * 35;
+  const relativeValue =
+    marketReference > 0
+      ? (marketReference - total) / marketReference
+      : 0;
+
+  let score = 80 + relativeValue * 180;
 
   if (rating != null) {
-    score += Math.max(-5, Math.min(5, (rating - 4) * 5));
+    score += Math.max(-3, Math.min(3, (rating - 4) * 3));
   }
 
-  if (sellerVotes && sellerVotes >= 50) score += 2;
+  if (sellerVotes && sellerVotes >= 50) score += 1;
   if (deliveryKnown) score += 1;
-  if (storeCount >= 4) score += 2;
+  if (storeCount >= 3) score += 1;
+  if (storeCount >= 5) score += 1;
 
-  return Math.round(Math.max(45, Math.min(96, score)));
+  return Math.round(Math.max(55, Math.min(95, score)));
 }
 
 function scoreOffersByVariant(

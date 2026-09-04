@@ -7,13 +7,13 @@ import { projectFamilyToLegacy } from '@/lib/catalog';
 import { LATVIA_ELECTRONICS_STORES, getStoreSeed, type StoreSeed } from '@/lib/store-registry';
 import type { VariantAttributes } from '@/lib/types';
 
-const USER_AGENT = 'CENIQBot/3.2 (+https://ceniq.lv)';
+const USER_AGENT = 'CENIQBot/3.3 (+https://ceniq.lv)';
 const HTML_LIMIT = 2_000_000;
 const SITEMAP_URL_LIMIT = 1500;
 const SITEMAP_DOC_LIMIT = 4;
 const DEFAULT_PAGE_LIMIT = 10;
-const QUERY_STORE_LIMIT = Math.min(14, Math.max(6, Number(process.env.CENIQ_QUERY_STORE_LIMIT || 10)));
-const QUERY_PAGES_PER_STORE = Math.min(3, Math.max(1, Number(process.env.CENIQ_QUERY_PAGES_PER_STORE || 3)));
+const QUERY_STORE_LIMIT = Math.min(26, Math.max(8, Number(process.env.CENIQ_QUERY_STORE_LIMIT || 16)));
+const QUERY_PAGES_PER_STORE = Math.min(6, Math.max(2, Number(process.env.CENIQ_QUERY_PAGES_PER_STORE || 4)));
 const RECRAWL_DAYS = 2;
 
 const RECURRING_PRICE_PATTERN =
@@ -209,22 +209,161 @@ function metaContent(html: string, keys: string[]) {
   return undefined;
 }
 
+function h1Content(html: string) {
+  const match = html.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i);
+  return match?.[1] ? stripTags(match[1]) : undefined;
+}
+
+function contentAttribute(
+  html: string,
+  attribute: string,
+) {
+  const escaped = attribute.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const patterns = [
+    new RegExp(
+      `<[^>]+\\b${escaped}=["']([^"']+)["'][^>]*>`,
+      'i',
+    ),
+    new RegExp(
+      `<[^>]+\\b${escaped}=([^\\s>]+)[^>]*>`,
+      'i',
+    ),
+  ];
+
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (match?.[1]) return decodeHtmlEntities(match[1].trim());
+  }
+
+  return undefined;
+}
+
+function visiblePriceCandidate(html: string) {
+  const text = stripTags(html).slice(0, 450_000);
+
+  const labelledPatterns = [
+    /(?:^|\s)(?:cena|price|mūsu cena|musu cena|akcijas cena|sale price)\s*:?\s*([0-9][0-9\s.,]{0,14})\s*€/gi,
+    /(?:^|\s)(?:cena|price)\s*:?\s*€\s*([0-9][0-9\s.,]{0,14})/gi,
+  ];
+
+  const labelled: number[] = [];
+
+  for (const pattern of labelledPatterns) {
+    let match: RegExpExecArray | null;
+
+    while ((match = pattern.exec(text)) && labelled.length < 20) {
+      const value = numeric(match[1]);
+      if (value && value > 0 && value < 100_000) {
+        labelled.push(value);
+      }
+    }
+  }
+
+  if (labelled.length) {
+    const max = Math.max(...labelled);
+    const plausible = labelled.filter((value) => value >= max * 0.55);
+    return Math.min(...(plausible.length ? plausible : labelled));
+  }
+
+  const generic: number[] = [];
+  const euro = /([0-9][0-9\s]{0,7}(?:[.,][0-9]{1,2})?)\s*€/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = euro.exec(text)) && generic.length < 80) {
+    const value = numeric(match[1]);
+    if (!value || value <= 0 || value >= 100_000) continue;
+
+    const start = Math.max(0, match.index - 55);
+    const end = Math.min(text.length, euro.lastIndex + 55);
+    const context = text.slice(start, end).toLowerCase();
+
+    if (
+      RECURRING_PRICE_PATTERN.test(context) ||
+      /(?:bez pvn|w\/o vat|without vat|piegāde|delivery|shipping|garantija|warranty)/i.test(context)
+    ) {
+      continue;
+    }
+
+    generic.push(value);
+  }
+
+  if (!generic.length) return undefined;
+
+  const max = Math.max(...generic);
+  const plausible = generic.filter((value) => value >= max * 0.55);
+
+  return Math.min(...(plausible.length ? plausible : generic));
+}
+
 function fallbackProductFromMeta(html: string, pageUrl: string) {
-  const name = metaContent(html, ['og:title', 'twitter:title', 'name']);
-  const price = metaContent(html, [
+  const parsed = safeUrl(pageUrl);
+
+  const explicitPrice = metaContent(html, [
     'product:price:amount',
     'og:price:amount',
     'price',
   ]);
 
-  if (!name || !price) return null;
+  const itemPropPrice =
+    contentAttribute(html, 'data-price') ||
+    contentAttribute(html, 'data-product-price');
+
+  const strongProductSignal = Boolean(
+    explicitPrice ||
+    /property=["']og:type["'][^>]+content=["']product["']/i.test(html),
+  );
+
+  const pathLooksProduct =
+    parsed
+      ? /(?:\/p\/|\/product(?:s)?\/|\/produkts?\/|\/prece\/|\/item\/|\/cenas\/[^/]+\/\d+-|\/\d{5,}[^/]*\.html?$)/i.test(
+          parsed.pathname,
+        )
+      : false;
+
+  if (!strongProductSignal && !pathLooksProduct) return null;
+
+  const name =
+    metaContent(html, ['og:title', 'twitter:title', 'name']) ||
+    h1Content(html);
+
+  const price =
+    numeric(explicitPrice) ||
+    numeric(itemPropPrice) ||
+    visiblePriceCandidate(html);
+
+  if (!name || !price || price <= 0) return null;
+
+  const pageText = stripTags(html).slice(0, 120_000);
+  const priceText = String(price).replace('.', ',');
+  const priceIndex = Math.max(
+    pageText.indexOf(String(price)),
+    pageText.indexOf(priceText),
+  );
+
+  if (priceIndex >= 0) {
+    const context = pageText.slice(
+      Math.max(0, priceIndex - 80),
+      Math.min(pageText.length, priceIndex + 80),
+    );
+
+    if (
+      RECURRING_PRICE_PATTERN.test(context) &&
+      !/(?:cena|price)\s*:?/i.test(context)
+    ) {
+      return null;
+    }
+  }
 
   return {
     '@type': 'Product',
     name,
     image: metaContent(html, ['og:image', 'twitter:image', 'image']),
-    sku: metaContent(html, ['sku', 'product:retailer_item_id']),
-    gtin13: metaContent(html, ['gtin13', 'ean']),
+    sku:
+      metaContent(html, ['sku', 'product:retailer_item_id']) ||
+      contentAttribute(html, 'data-sku'),
+    gtin13:
+      metaContent(html, ['gtin13', 'ean']) ||
+      contentAttribute(html, 'data-ean'),
     brand: metaContent(html, ['brand', 'product:brand']),
     color: metaContent(html, ['color', 'product:color']),
     url: pageUrl,
@@ -1574,7 +1713,6 @@ async function existingQueryPages(query: string, limit: number) {
     where: {
       source: {
         active: true,
-        robotsAllowed: { not: false },
       },
       OR: [
         {
@@ -1601,10 +1739,22 @@ async function processDiscoveredSource(
   source: any,
   query: string,
 ) {
+  const queryStartedAt = new Date(Date.now() - 1500);
+
   try {
     const discovered = await discoverQueryPagesForSource(source, query);
 
     if (!discovered.robots.allowed || !discovered.pages.length) {
+      await prisma.crawlSource.update({
+        where: { id: source.id },
+        data: {
+          lastRunAt: new Date(),
+          lastError: !discovered.robots.allowed
+            ? 'Blocked by robots.txt'
+            : 'No query-matching product pages discovered',
+        },
+      }).catch(() => undefined);
+
       return {
         source: source.slug,
         pages: 0,
@@ -1671,11 +1821,67 @@ async function processDiscoveredSource(
       }
     }
 
+    // Some stores expose a category/search page first. processPage() can discover
+    // direct product links from that page; follow the newest high-priority links
+    // immediately instead of forcing the user to search a second time.
+    if (products === 0) {
+      const processedIds = savedPages.map((page) => page.id);
+      const followPages = await prisma.crawlPage.findMany({
+        where: {
+          sourceId: source.id,
+          status: 'pending',
+          createdAt: { gte: queryStartedAt },
+          ...(processedIds.length
+            ? { id: { notIn: processedIds } }
+            : {}),
+        },
+        orderBy: [
+          { priority: 'desc' },
+          { createdAt: 'desc' },
+        ],
+        take: 3,
+      });
+
+      for (let index = 0; index < followPages.length; index += 1) {
+        const page = followPages[index];
+
+        try {
+          const result = await processPage(
+            page,
+            source,
+            discovered.robots,
+          );
+
+          products += result.products;
+          blocked ||= result.blocked;
+        } catch (error) {
+          await prisma.crawlPage.update({
+            where: { id: page.id },
+            data: {
+              status: 'error',
+              attempts: { increment: 1 },
+              lastError:
+                error instanceof Error
+                  ? error.message.slice(0, 1000)
+                  : 'Query crawler follow-up error',
+              lastCrawledAt: new Date(),
+              nextCrawlAt: new Date(Date.now() + 12 * 60 * 60 * 1000),
+            },
+          }).catch(() => undefined);
+        }
+
+        if (products > 0) break;
+      }
+    }
+
     await prisma.crawlSource.update({
       where: { id: source.id },
       data: {
         lastRunAt: new Date(),
-        lastError: null,
+        lastError:
+          products > 0
+            ? null
+            : 'Pages checked, but no structured product could be accepted',
       },
     }).catch(() => undefined);
 
@@ -1764,7 +1970,6 @@ export async function crawlQueryCandidates(query: string, limit = QUERY_STORE_LI
   const sources = await prisma.crawlSource.findMany({
     where: {
       active: true,
-      robotsAllowed: { not: false },
     },
     include: { merchant: true },
     orderBy: [
@@ -1811,7 +2016,7 @@ export async function runCrawlerCycle(pageLimit = DEFAULT_PAGE_LIMIT) {
       { lastSeededAt: 'asc' },
       { priority: 'desc' },
     ],
-    take: 4,
+    take: 8,
   });
 
   const seedResults = [];
@@ -1843,7 +2048,7 @@ export async function runCrawlerCycle(pageLimit = DEFAULT_PAGE_LIMIT) {
       { lastRunAt: 'asc' },
       { priority: 'desc' },
     ],
-    take: 4,
+    take: 8,
   });
 
   const crawlResults = [];

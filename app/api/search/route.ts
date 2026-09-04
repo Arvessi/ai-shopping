@@ -42,7 +42,7 @@ const CACHE_MINUTES = Math.min(
 function normalizeCacheKey(
   query: string,
 ) {
-  return `v32:${query
+  return `v33:${query
     .toLowerCase()
     .replace(/\s+/g, ' ')
     .trim()}`;
@@ -753,7 +753,7 @@ export async function POST(
         const crawl =
           await crawlQueryCandidates(
             q,
-            10,
+            16,
           ).catch(
             () => ({
               pages: 0,
@@ -809,7 +809,7 @@ export async function POST(
       return NextResponse.json({
         results: cached,
         source:
-          'ceniq-cache-v32',
+          'ceniq-cache-v33',
         cached: true,
       });
     }
