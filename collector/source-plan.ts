@@ -9,23 +9,15 @@ export type CollectorSourcePlan = {
  * CENIQ source priority is intentionally feed-first.
  *
  * 1. Merchant/public XML or CSV feed when available.
- * 2. Sitemap catalogue discovery.
+ * 2. Sitemap catalogue discovery. Empty configured sitemapUrls means the
+ *    handler should discover Sitemap directives from public robots.txt.
  * 3. Store-specific catalogue/category adapter.
  * 4. External discovery only for seeding gaps, never as user-search runtime.
  */
 export function sourcePlanForStore(store: CollectorStore): CollectorSourcePlan {
-  const orderedSources: CollectorSourceKind[] = [];
-
-  if ((store.feedUrls?.length ?? 0) > 0) orderedSources.push("merchant-feed");
-  if (store.sitemapUrls.length > 0) orderedSources.push("sitemap");
+  const orderedSources: CollectorSourceKind[] = ["merchant-feed", "sitemap"];
 
   orderedSources.push("catalog-adapter", "discovery-fallback");
-
-  // Even before a feed URL is configured, keep feed as the preferred future
-  // source so onboarding a merchant never requires changing orchestration code.
-  if (!orderedSources.includes("merchant-feed")) {
-    orderedSources.unshift("merchant-feed");
-  }
 
   return { storeSlug: store.slug, orderedSources };
 }
