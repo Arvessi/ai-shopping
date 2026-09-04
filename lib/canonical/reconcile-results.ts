@@ -3,12 +3,29 @@ import { canonicalizeMerchantProductTitle } from './title-normalization.ts';
 import { normalizeText } from './domain.ts';
 
 const GENERIC_CONTEXT = new Set(['phone','smartphone','mobile','laptop','notebook','computer','monitor','tv','television','headphones','headphone','camera','printer','speaker','router','smartwatch','product']);
+const ACCESSORY = /\b(?:case|cover|screen protector|glass|charger|adapter|cable|maci[nņ]s|vaci[nņ]s|aizsargstikls|apvalks)\b/i;
 
 function phoneKey(value: string) {
+  if (ACCESSORY.test(value)) return '';
   const iphone = value.match(/\b(?:Apple\s+)?iPhone\s+(\d{1,2})(?:\s*(e)\b|\s+(Pro\s+Max|Pro|Plus|Air|Mini|SE)\b)?/i);
   if (iphone) return `phone:apple:iphone:${iphone[1]}:${normalizeText(iphone[2] ? 'e' : iphone[3] || 'base')}`;
   const galaxy = value.match(/\b(?:Samsung\s+)?Galaxy\s+([A-Z]\d{1,3})(?:\s+(Ultra|Plus|FE))?\b/i);
   if (galaxy) return `phone:samsung:galaxy:${galaxy[1].toLowerCase()}:${normalizeText(galaxy[2] || 'base')}`;
+
+  const patterns: Array<[RegExp,string]> = [
+    [/\bHonor\s+(\d{2,3})(?:\s+(Lite|Pro|Pro\+|Ultra))?\b/i,'honor'],
+    [/\bXiaomi\s+(\d{1,2}[A-Z]?)(?:\s+(Lite|Pro|Ultra|T|T Pro))?\b/i,'xiaomi'],
+    [/\bOnePlus\s+(\d{1,2})(?:\s+(R|T|Pro))?\b/i,'oneplus'],
+    [/\bNubia\s+(Neo\s+\d+(?:\s+GT)?|Z\d+(?:\s+Ultra)?)\b/i,'nubia'],
+    [/\bBlackview\s+(Rugged\s+)?([A-Z]{1,4}\d{2,5})\b/i,'blackview'],
+    [/\bSony\s+Xperia\s+(\d+\s+[IVX]+)\b/i,'sony-xperia'],
+  ];
+  for (const [pattern, brand] of patterns) {
+    const match = value.match(pattern);
+    if (!match) continue;
+    const model = match.slice(1).filter(Boolean).join(' ');
+    return `phone:${brand}:${normalizeText(model)}`;
+  }
   return '';
 }
 
@@ -21,6 +38,7 @@ function modelToken(value: string) {
 
 function strongKey(product: ProductResult) {
   const title = canonicalizeMerchantProductTitle(product.title, product.brand).title;
+  if (ACCESSORY.test(title)) return '';
   const phone = phoneKey(title);
   if (phone) return phone;
 
@@ -49,19 +67,13 @@ export function reconcileStrongFamilies(input: ProductResult[]) {
 
   for (const product of input) {
     const key = strongKey(product);
-    if (!key) {
-      singles.push(product);
-      continue;
-    }
+    if (!key) { singles.push(product); continue; }
     groups.set(key, [...(groups.get(key) || []), product]);
   }
 
   const merged: ProductResult[] = [...singles];
   for (const products of groups.values()) {
-    if (products.length === 1) {
-      merged.push(products[0]);
-      continue;
-    }
+    if (products.length === 1) { merged.push(products[0]); continue; }
 
     const base = [...products].sort((a, b) => (b.offers?.length || 0) - (a.offers?.length || 0))[0];
     const offers = [...new Map(products.flatMap((product) => product.offers || []).map((offer) => [offer.id || `${merchantKey(offer)}|${offer.url}|${offer.totalPrice}`, offer])).values()];
