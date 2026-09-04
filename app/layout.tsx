@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import './globals.css';
-import './ceniq70.css';
+import './ceniq80.css';
 import Header from '@/components/Header';
 import Footer from '@/components/Footer';
 
