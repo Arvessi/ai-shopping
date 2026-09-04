@@ -4,6 +4,7 @@ import { parseProductPage, isAllowedCatalogItem } from "../collector/product-pag
 import { parseSitemapXml, looksLikeProductUrl } from "../collector/sitemap.ts";
 import { knownMerchantDomains } from "../collector/discovery.ts";
 import { discoveryMerchants } from "../collector/discovery-merchants.ts";
+import { parseMerchantXmlFeed } from "../collector/feed.ts";
 import type { CollectorStore } from "../collector/types.ts";
 
 const store: CollectorStore = {
@@ -138,4 +139,52 @@ test("discovery universe covers broad LV catalogue and Baltic candidates", () =>
   assert.ok(discoveryMerchants.some((merchant) => merchant.slug === "sportland"));
   assert.ok(discoveryMerchants.some((merchant) => merchant.slug === "trodo"));
   assert.ok(discoveryMerchants.some((merchant) => merchant.slug === "varle-lt" && merchant.deliveryToLatvia === "verify"));
+});
+
+test("imports a conventional product XML feed without merchant-specific mapping", () => {
+  const xml = `
+    <catalog><products>
+      <product>
+        <name>Example Laptop 16GB 512GB</name>
+        <link>https://shop.example/laptop-16-512</link>
+        <price>799,99 EUR</price>
+        <brand>Example</brand>
+        <ean>1234567890123</ean>
+        <image_url>https://cdn.example/laptop.jpg</image_url>
+        <stock>in_stock</stock>
+      </product>
+    </products></catalog>`;
+
+  const result = parseMerchantXmlFeed(xml, store);
+  assert.equal(result.totalItems, 1);
+  assert.equal(result.rejected, 0);
+  assert.equal(result.offers.length, 1);
+  assert.equal(result.offers[0]?.price, 799.99);
+  assert.equal(result.offers[0]?.gtin, "1234567890123");
+  assert.equal(result.offers[0]?.imageUrl, "https://cdn.example/laptop.jpg");
+});
+
+test("imports offer-style XML aliases and rejects unsafe catalogue entries", () => {
+  const xml = `
+    <shop><offers>
+      <offer>
+        <title>Example TV 55 OLED</title>
+        <url>https://shop.example/tv/oled-55</url>
+        <sale_price>1099.00</sale_price>
+        <currency>EUR</currency>
+        <manufacturer>Example</manufacturer>
+        <product_id>TV-55-1</product_id>
+      </offer>
+      <offer>
+        <title>nicotine vape device</title>
+        <url>https://shop.example/restricted-item</url>
+        <price>19.99</price>
+      </offer>
+    </offers></shop>`;
+
+  const result = parseMerchantXmlFeed(xml, store);
+  assert.equal(result.totalItems, 2);
+  assert.equal(result.offers.length, 1);
+  assert.equal(result.rejected, 1);
+  assert.equal(result.offers[0]?.sku, "TV-55-1");
 });
