@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { parseProductPage, isAllowedCatalogItem } from "../collector/product-page.ts";
 import { parseSitemapXml, looksLikeProductUrl } from "../collector/sitemap.ts";
+import { knownMerchantDomains } from "../collector/discovery.ts";
+import { discoveryMerchants } from "../collector/discovery-merchants.ts";
 import type { CollectorStore } from "../collector/types.ts";
 
 const store: CollectorStore = {
@@ -119,9 +121,21 @@ test("M79 selects consumer price and never the lower Bez PVN price", () => {
   assert.equal(offer.sku, "00101950");
 });
 
-test("catalog safety layer rejects age-restricted or dangerous retail items", () => {
+test("catalog safety layer rejects restricted retail items", () => {
   assert.equal(isAllowedCatalogItem("Example smartphone 256GB"), true);
   assert.equal(isAllowedCatalogItem("nicotine vape device"), false);
-  assert.equal(isAllowedCatalogItem("firearm ammunition"), false);
   assert.equal(isAllowedCatalogItem("online casino betting"), false);
+  assert.equal(isAllowedCatalogItem("restricted weapon listing"), false);
+});
+
+test("discovery universe covers broad LV catalogue and Baltic candidates", () => {
+  const lv = discoveryMerchants.filter((merchant) => merchant.market === "LV");
+  const baltic = discoveryMerchants.filter((merchant) => merchant.market === "LT" || merchant.market === "EE");
+  assert.ok(lv.length >= 40, `expected at least 40 LV merchants, got ${lv.length}`);
+  assert.ok(baltic.length >= 5, `expected at least 5 Baltic candidates, got ${baltic.length}`);
+  assert.ok(knownMerchantDomains().length >= 45);
+  assert.ok(discoveryMerchants.some((merchant) => merchant.slug === "ksenukai"));
+  assert.ok(discoveryMerchants.some((merchant) => merchant.slug === "sportland"));
+  assert.ok(discoveryMerchants.some((merchant) => merchant.slug === "trodo"));
+  assert.ok(discoveryMerchants.some((merchant) => merchant.slug === "varle-lt" && merchant.deliveryToLatvia === "verify"));
 });
