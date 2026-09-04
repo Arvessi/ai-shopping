@@ -16,26 +16,33 @@ import type {
 const categories = [
   ['📱', 'Telefoni', 'smartphone'],
   ['💻', 'Portatīvie', 'laptop'],
-  ['🖥️', 'Monitori', 'gaming monitor'],
+  ['🖥️', 'Monitori', 'monitor'],
   ['📺', 'TV', 'OLED TV'],
   ['🎧', 'Audio', 'wireless headphones'],
-  ['🎮', 'Gaming', 'gaming accessories'],
+  ['🎮', 'Gaming', 'gaming computer'],
   ['📷', 'Kameras', 'mirrorless camera'],
   ['🏠', 'Mājai', 'smart home electronics'],
 ];
 
 const fallbackPopular = [
-  'iPhone 17 Pro',
-  'gaming monitors 240Hz',
-  'OLED TV 55',
+  'iPhone 16',
+  'Samsung Galaxy S25',
   'MacBook Air',
-  'wireless headphones',
+  'OLED TV 55',
+  'gaming laptop',
 ];
 
-const SEARCH_STATE_KEY = 'ceniq-search-state-v3';
+const SEARCH_STATE_KEY =
+  'ceniq-search-state-v32';
 
-type SearchMode = 'search' | 'assistant';
-type SortMode = 'recommended' | 'price' | 'coverage';
+type SearchMode =
+  | 'search'
+  | 'assistant';
+
+type SortMode =
+  | 'coverage'
+  | 'price'
+  | 'score';
 
 type SavedSearchState = {
   query: string;
@@ -43,61 +50,133 @@ type SavedSearchState = {
   results: ProductResult[];
   notice: string;
   plan: AiShoppingPlan | null;
+  source?: string;
 };
 
 export default function SearchExperience() {
-  const [mode, setMode] = useState<SearchMode>('search');
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState<ProductResult[]>([]);
-  const [popular, setPopular] = useState<string[]>(fallbackPopular);
-  const [loading, setLoading] = useState(false);
-  const [status, setStatus] = useState('');
-  const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
-  const [plan, setPlan] = useState<AiShoppingPlan | null>(null);
-  const [restored, setRestored] = useState(false);
-
-  const [brandFilter, setBrandFilter] = useState('all');
-  const [storeFilter, setStoreFilter] = useState('all');
-  const [maxPrice, setMaxPrice] = useState('');
-  const [sortMode, setSortMode] = useState<SortMode>('recommended');
+  const [mode, setMode] =
+    useState<SearchMode>(
+      'search',
+    );
+  const [query, setQuery] =
+    useState('');
+  const [results, setResults] =
+    useState<
+      ProductResult[]
+    >([]);
+  const [popular, setPopular] =
+    useState<string[]>(
+      fallbackPopular,
+    );
+  const [loading, setLoading] =
+    useState(false);
+  const [status, setStatus] =
+    useState('');
+  const [error, setError] =
+    useState('');
+  const [notice, setNotice] =
+    useState('');
+  const [plan, setPlan] =
+    useState<
+      AiShoppingPlan | null
+    >(null);
+  const [source, setSource] =
+    useState('');
+  const [restored, setRestored] =
+    useState(false);
+  const [sortMode, setSortMode] =
+    useState<SortMode>(
+      'coverage',
+    );
 
   useEffect(() => {
     fetch('/api/popular')
-      .then((response) => response.json())
+      .then((response) =>
+        response.json(),
+      )
       .then((data) => {
-        if (data.searches?.length) {
-          setPopular(data.searches);
+        if (
+          data.searches?.length
+        ) {
+          setPopular(
+            data.searches,
+          );
         }
       })
-      .catch(() => undefined);
+      .catch(
+        () => undefined,
+      );
 
     try {
-      const saved = window.sessionStorage.getItem(SEARCH_STATE_KEY);
+      const saved =
+        window.sessionStorage.getItem(
+          SEARCH_STATE_KEY,
+        );
 
       if (saved) {
-        const parsed = JSON.parse(saved) as Partial<SavedSearchState>;
+        const parsed =
+          JSON.parse(
+            saved,
+          ) as Partial<SavedSearchState>;
 
-        if (typeof parsed.query === 'string') {
-          setQuery(parsed.query);
+        if (
+          typeof parsed.query ===
+          'string'
+        ) {
+          setQuery(
+            parsed.query,
+          );
         }
 
-        if (parsed.mode === 'assistant' || parsed.mode === 'search') {
-          setMode(parsed.mode);
+        if (
+          parsed.mode ===
+            'assistant' ||
+          parsed.mode ===
+            'search'
+        ) {
+          setMode(
+            parsed.mode,
+          );
         }
 
-        if (Array.isArray(parsed.results)) {
-          setResults(parsed.results);
+        if (
+          Array.isArray(
+            parsed.results,
+          )
+        ) {
+          setResults(
+            parsed.results,
+          );
         }
 
-        if (typeof parsed.notice === 'string') {
-          setNotice(parsed.notice);
+        if (
+          typeof parsed.notice ===
+          'string'
+        ) {
+          setNotice(
+            parsed.notice,
+          );
         }
 
-        if (parsed.plan) setPlan(parsed.plan);
+        if (
+          typeof parsed.source ===
+          'string'
+        ) {
+          setSource(
+            parsed.source,
+          );
+        }
+
+        if (parsed.plan) {
+          setPlan(
+            parsed.plan,
+          );
+        }
       }
     } catch {
-      window.sessionStorage.removeItem(SEARCH_STATE_KEY);
+      window.sessionStorage.removeItem(
+        SEARCH_STATE_KEY,
+      );
     } finally {
       setRestored(true);
     }
@@ -112,115 +191,91 @@ export default function SearchExperience() {
       results,
       notice,
       plan,
+      source,
     };
 
     try {
       window.sessionStorage.setItem(
         SEARCH_STATE_KEY,
-        JSON.stringify(state),
+        JSON.stringify(
+          state,
+        ),
       );
     } catch {
-      // Ignore private-mode storage errors.
+      // Ignore storage errors.
     }
-  }, [restored, query, mode, results, notice, plan]);
-
-  const brands = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          results
-            .map((product) => product.brand)
-            .filter(Boolean) as string[],
-        ),
-      ).sort(),
-    [results],
-  );
-
-  const stores = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          results.flatMap((product) =>
-            product.offers.map((offer) => offer.merchant),
-          ),
-        ),
-      ).sort(),
-    [results],
-  );
-
-  const filteredResults = useMemo(() => {
-    const limit = Number(maxPrice);
-
-    const filtered = results.filter((product) => {
-      if (
-        brandFilter !== 'all' &&
-        product.brand !== brandFilter
-      ) {
-        return false;
-      }
-
-      if (
-        storeFilter !== 'all' &&
-        !product.offers.some(
-          (offer) => offer.merchant === storeFilter,
-        )
-      ) {
-        return false;
-      }
-
-      if (
-        maxPrice &&
-        Number.isFinite(limit) &&
-        product.bestPrice > limit
-      ) {
-        return false;
-      }
-
-      return true;
-    });
-
-    return [...filtered].sort((a, b) => {
-      if (sortMode === 'price') {
-        return a.bestPrice - b.bestPrice;
-      }
-
-      if (sortMode === 'coverage') {
-        return (
-          (b.storesCount || b.offers.length) -
-            (a.storesCount || a.offers.length) ||
-          a.bestPrice - b.bestPrice
-        );
-      }
-
-      return (
-        (b.storesCount || b.offers.length) -
-          (a.storesCount || a.offers.length) ||
-        b.dealScore - a.dealScore ||
-        a.bestPrice - b.bestPrice
-      );
-    });
   }, [
+    restored,
+    query,
+    mode,
     results,
-    brandFilter,
-    storeFilter,
-    maxPrice,
-    sortMode,
+    notice,
+    plan,
+    source,
   ]);
 
-  function resetFilters() {
-    setBrandFilter('all');
-    setStoreFilter('all');
-    setMaxPrice('');
-    setSortMode('recommended');
-  }
+  const sortedResults =
+    useMemo(() => {
+      return [
+        ...results,
+      ].sort((a, b) => {
+        if (
+          sortMode ===
+          'price'
+        ) {
+          return (
+            a.bestPrice -
+            b.bestPrice
+          );
+        }
+
+        if (
+          sortMode ===
+          'score'
+        ) {
+          return (
+            b.dealScore -
+              a.dealScore ||
+            (b.storesCount ||
+              0) -
+              (a.storesCount ||
+                0)
+          );
+        }
+
+        return (
+          (b.storesCount ||
+            0) -
+            (a.storesCount ||
+              0) ||
+          b.dealScore -
+            a.dealScore ||
+          a.bestPrice -
+            b.bestPrice
+        );
+      });
+    }, [
+      results,
+      sortMode,
+    ]);
 
   function updateUrl(
     searchQuery: string,
     searchMode: SearchMode,
   ) {
-    const url = new URL(window.location.href);
-    url.searchParams.set('q', searchQuery);
-    url.searchParams.set('mode', searchMode);
+    const url = new URL(
+      window.location.href,
+    );
+
+    url.searchParams.set(
+      'q',
+      searchQuery,
+    );
+
+    url.searchParams.set(
+      'mode',
+      searchMode,
+    );
 
     window.history.replaceState(
       window.history.state,
@@ -233,60 +288,99 @@ export default function SearchExperience() {
     searchQuery: string,
     searchMode: SearchMode,
   ) {
-    setStatus('Meklējam un grupējam piedāvājumus…');
-
-    const controller = new AbortController();
-    const timeout = window.setTimeout(
-      () => controller.abort(),
-      30000,
+    setStatus(
+      'CENIQ pārbauda katalogu un veikalus…',
     );
 
-    try {
-      const response = await fetch('/api/search', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          q: searchQuery,
-          mode: searchMode,
-        }),
-        signal: controller.signal,
-      });
+    const controller =
+      new AbortController();
 
-      const data = await response.json();
+    const timeout =
+      window.setTimeout(
+        () =>
+          controller.abort(),
+        55000,
+      );
+
+    try {
+      const response =
+        await fetch(
+          '/api/search',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type':
+                'application/json',
+            },
+            body: JSON.stringify({
+              q: searchQuery,
+              mode: searchMode,
+            }),
+            signal:
+              controller.signal,
+          },
+        );
+
+      const data =
+        await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || 'Meklēšana neizdevās.');
+        throw new Error(
+          data.error ||
+            'Meklēšana neizdevās.',
+        );
       }
 
-      const nextResults = Array.isArray(data.results)
-        ? data.results
-        : [];
+      const nextResults =
+        Array.isArray(
+          data.results,
+        )
+          ? data.results
+          : [];
 
-      setResults(nextResults);
-      resetFilters();
+      setResults(
+        nextResults,
+      );
+
+      setSource(
+        data.source || '',
+      );
+
+      setSortMode(
+        'coverage',
+      );
 
       setNotice(
-        nextResults.length === 0
-          ? data.message || 'Nekas netika atrasts.'
-          : data.cached
-            ? 'Rezultāti no CENIQ kešatmiņas.'
-            : '',
+        nextResults.length ===
+          0
+          ? data.message ||
+              'Nekas netika atrasts.'
+          : '',
       );
 
       setStatus('');
 
-      if (nextResults.length) {
-        window.setTimeout(() => {
-          document
-            .getElementById('results')
-            ?.scrollIntoView({
-              behavior: 'smooth',
-              block: 'start',
-            });
-        }, 60);
+      if (
+        nextResults.length
+      ) {
+        window.setTimeout(
+          () =>
+            document
+              .getElementById(
+                'results',
+              )
+              ?.scrollIntoView({
+                behavior:
+                  'smooth',
+                block: 'start',
+              }),
+          60,
+        );
       }
     } finally {
-      window.clearTimeout(timeout);
+      window.clearTimeout(
+        timeout,
+      );
     }
   }
 
@@ -297,88 +391,169 @@ export default function SearchExperience() {
   ) {
     e?.preventDefault();
 
-    const activeMode = forcedMode ?? mode;
-    const input = (override ?? query).trim();
+    const activeMode =
+      forcedMode ?? mode;
 
-    if (!input || loading) return;
+    const input = (
+      override ?? query
+    ).trim();
+
+    if (
+      !input ||
+      loading
+    ) {
+      return;
+    }
 
     setQuery(input);
-    setMode(activeMode);
-    updateUrl(input, activeMode);
-
-    document
-      .getElementById('meklet')
-      ?.scrollIntoView({
-        behavior: 'smooth',
-        block: 'start',
-      });
+    setMode(
+      activeMode,
+    );
+    updateUrl(
+      input,
+      activeMode,
+    );
 
     setLoading(true);
     setError('');
     setNotice('');
     setResults([]);
     setPlan(null);
+    setSource('');
 
     try {
-      if (activeMode === 'assistant') {
-        setStatus('CENIQ saprot tavas prasības…');
+      if (
+        activeMode ===
+        'assistant'
+      ) {
+        setStatus(
+          'CENIQ saprot tavas prasības…',
+        );
 
-        const response = await fetch('/api/ai', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt: input }),
-        });
+        const response =
+          await fetch(
+            '/api/ai',
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type':
+                  'application/json',
+              },
+              body: JSON.stringify({
+                prompt: input,
+              }),
+            },
+          );
 
-        const data = await response.json();
+        const data =
+          await response.json();
 
         if (!response.ok) {
-          throw new Error(data.error || 'CENIQ AI neizdevās.');
+          throw new Error(
+            data.error ||
+              'CENIQ AI neizdevās.',
+          );
         }
 
-        setPlan(data.plan);
-        await runSearch(data.plan.searchQuery, 'assistant');
+        setPlan(
+          data.plan,
+        );
+
+        await runSearch(
+          data.plan
+            .searchQuery,
+          'assistant',
+        );
       } else {
-        await runSearch(input, 'search');
+        await runSearch(
+          input,
+          'search',
+        );
       }
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : 'Radās kļūda.',
+        err instanceof Error
+          ? err.name ===
+            'AbortError'
+            ? 'Meklēšana aizņēma pārāk ilgu laiku. Pamēģini vēlreiz.'
+            : err.message
+          : 'Radās kļūda.',
       );
+
       setStatus('');
     } finally {
       setLoading(false);
     }
   }
 
+  const sourceLabel =
+    source ===
+    'ceniq-catalog'
+      ? 'CENIQ katalogs'
+      : source ===
+          'ceniq-hybrid'
+        ? 'CENIQ katalogs + veikalu fallback'
+        : source ===
+            'approved-store-fallback'
+          ? 'Apstiprinātie LV veikali'
+          : source ===
+              'ceniq-cache-v32'
+            ? 'CENIQ kešatmiņa'
+            : '';
+
   return (
     <>
-      <section className="hero" id="meklet">
+      <section
+        className="hero"
+        id="meklet"
+      >
         <div className="eyebrow">
-          Latvijas cenu meklētājs
+          Latvijas cenu
+          meklētājs
         </div>
 
         <h1>
           Atrodi labāko cenu.
           <br />
-          <span>Pērc gudrāk.</span>
+          <span>
+            Pērc gudrāk.
+          </span>
         </h1>
 
         <p>
-          CENIQ grupē vienu produktu, atrod veikalus
-          un palīdz saprast, kurš piedāvājums ir jēdzīgs.
+          Viens produkts,
+          varianti un veikalu
+          cenas vienuviet.
         </p>
 
         <div className="modes">
           <button
-            className={mode === 'search' ? 'active' : ''}
-            onClick={() => setMode('search')}
+            className={
+              mode === 'search'
+                ? 'active'
+                : ''
+            }
+            onClick={() =>
+              setMode(
+                'search',
+              )
+            }
           >
             ⌕ Meklēšana
           </button>
 
           <button
-            className={mode === 'assistant' ? 'active' : ''}
-            onClick={() => setMode('assistant')}
+            className={
+              mode ===
+              'assistant'
+                ? 'active'
+                : ''
+            }
+            onClick={() =>
+              setMode(
+                'assistant',
+              )
+            }
           >
             ✦ CENIQ AI
           </button>
@@ -386,26 +561,39 @@ export default function SearchExperience() {
 
         <form
           className="bigsearch"
-          onSubmit={(e: FormEvent<HTMLFormElement>) => submit(e)}
+          onSubmit={(
+            e: FormEvent<HTMLFormElement>,
+          ) =>
+            submit(e)
+          }
         >
           <span>⌕</span>
 
           <input
             value={query}
-            onChange={(e: ChangeEvent<HTMLInputElement>) =>
-              setQuery(e.target.value)
+            onChange={(
+              e: ChangeEvent<HTMLInputElement>,
+            ) =>
+              setQuery(
+                e.target.value,
+              )
             }
             placeholder={
               mode === 'search'
                 ? 'Piem., iPhone 16 128GB'
-                : 'Piem., 27 collu 144Hz monitors līdz 300 €'
+                : 'Piem., portatīvais dators līdz 1200 € spēlēm'
             }
           />
 
-          <button disabled={loading}>
+          <button
+            disabled={
+              loading
+            }
+          >
             {loading
               ? 'Meklē…'
-              : mode === 'assistant'
+              : mode ===
+                  'assistant'
                 ? 'Jautāt'
                 : 'Meklēt'}
           </button>
@@ -418,147 +606,166 @@ export default function SearchExperience() {
           </div>
         )}
 
-        {error && <div className="errorbox">{error}</div>}
-
-        {notice && !error && (
-          <div className="searchnotice">{notice}</div>
+        {error && (
+          <div className="errorbox">
+            {error}
+          </div>
         )}
+
+        {notice &&
+          !error && (
+            <div className="searchnotice">
+              {notice}
+            </div>
+          )}
       </section>
 
       {plan && (
         <section className="container aianswer">
-          <div className="aibadge">✦ CENIQ</div>
-          <h2>{plan.summary}</h2>
-
-          <div className="chips">
-            {plan.constraints.map((constraint) => (
-              <span key={constraint}>{constraint}</span>
-            ))}
+          <div className="aibadge">
+            ✦ CENIQ
           </div>
+
+          <h2>
+            {plan.summary}
+          </h2>
+
+          {!!plan.constraints
+            ?.length && (
+            <div className="chips">
+              {plan.constraints.map(
+                (
+                  constraint: string,
+                ) => (
+                  <span
+                    key={
+                      constraint
+                    }
+                  >
+                    {
+                      constraint
+                    }
+                  </span>
+                ),
+              )}
+            </div>
+          )}
         </section>
       )}
 
-      {results.length > 0 && (
+      {results.length >
+        0 && (
         <section
-          className="container results"
+          className="container results results-v32"
           id="results"
         >
-          <div className="sectiontitle">
+          <div className="sectiontitle resulttitle-v32">
             <div>
-              <span>ATRASTIE PRODUKTI</span>
-              <h2>Labākās izvēles</h2>
+              <span>
+                ATRASTIE
+                PRODUKTI
+              </span>
+
+              <h2>
+                Cenas un
+                varianti
+              </h2>
             </div>
 
-            <p>{results.length} produktu grupas</p>
+            <div className="resultsource">
+              {sourceLabel && (
+                <small>
+                  {
+                    sourceLabel
+                  }
+                </small>
+              )}
+
+              <b>
+                {
+                  results.length
+                }{' '}
+                {results.length ===
+                1
+                  ? 'produktu grupa'
+                  : 'produktu grupas'}
+              </b>
+            </div>
           </div>
 
-          <div className="smartfilters">
-            <div className="sortpills">
-              <button
-                className={
-                  sortMode === 'recommended' ? 'active' : ''
-                }
-                onClick={() => setSortMode('recommended')}
-              >
-                CENIQ iesaka
-              </button>
+          {results.length >
+            1 && (
+            <div className="results-sortbar">
+              <span>
+                Kārtot
+              </span>
 
               <button
                 className={
-                  sortMode === 'price' ? 'active' : ''
+                  sortMode ===
+                  'coverage'
+                    ? 'active'
+                    : ''
                 }
-                onClick={() => setSortMode('price')}
-              >
-                Lētākie
-              </button>
-
-              <button
-                className={
-                  sortMode === 'coverage' ? 'active' : ''
+                onClick={() =>
+                  setSortMode(
+                    'coverage',
+                  )
                 }
-                onClick={() => setSortMode('coverage')}
               >
                 Vairāk veikalu
               </button>
+
+              <button
+                className={
+                  sortMode ===
+                  'price'
+                    ? 'active'
+                    : ''
+                }
+                onClick={() =>
+                  setSortMode(
+                    'price',
+                  )
+                }
+              >
+                Lētākā cena
+              </button>
+
+              <button
+                className={
+                  sortMode ===
+                  'score'
+                    ? 'active'
+                    : ''
+                }
+                onClick={() =>
+                  setSortMode(
+                    'score',
+                  )
+                }
+              >
+                CENIQ score
+              </button>
             </div>
+          )}
 
-            <div className="facetfilters">
-              {brands.length > 1 && (
-                <label>
-                  <span>Zīmols</span>
-                  <select
-                    value={brandFilter}
-                    onChange={(e) =>
-                      setBrandFilter(e.target.value)
-                    }
-                  >
-                    <option value="all">Visi</option>
-                    {brands.map((brand) => (
-                      <option key={brand} value={brand}>
-                        {brand}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-
-              {stores.length > 1 && (
-                <label>
-                  <span>Veikals</span>
-                  <select
-                    value={storeFilter}
-                    onChange={(e) =>
-                      setStoreFilter(e.target.value)
-                    }
-                  >
-                    <option value="all">Visi</option>
-                    {stores.map((store) => (
-                      <option key={store} value={store}>
-                        {store}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-
-              <label>
-                <span>Cena līdz</span>
-                <input
-                  type="number"
-                  min="0"
-                  placeholder="€"
-                  value={maxPrice}
-                  onChange={(e) =>
-                    setMaxPrice(e.target.value)
+          <div className="resultfamily-list">
+            {sortedResults.map(
+              (product: ProductResult) => (
+                <ProductCard
+                  product={
+                    product
+                  }
+                  query={
+                    query
+                  }
+                  key={
+                    product.id
                   }
                 />
-              </label>
-
-              {(brandFilter !== 'all' ||
-                storeFilter !== 'all' ||
-                maxPrice ||
-                sortMode !== 'recommended') && (
-                <button
-                  className="filterreset"
-                  onClick={resetFilters}
-                >
-                  Notīrīt
-                </button>
-              )}
-            </div>
-          </div>
-
-          <div className="resultsmeta">
-            {filteredResults.length} no {results.length} produktu grupām
-          </div>
-
-          <div className="productgrid">
-            {filteredResults.map((product) => (
-              <ProductCard
-                product={product}
-                key={product.id}
-              />
-            ))}
+              ),
+            )}
           </div>
         </section>
       )}
@@ -569,48 +776,96 @@ export default function SearchExperience() {
       >
         <div className="sectiontitle">
           <div>
-            <span>ŠOBRĪD MEKLĒ</span>
-            <h2>Populārākie</h2>
+            <span>
+              ŠOBRĪD MEKLĒ
+            </span>
+
+            <h2>
+              Populārākie
+            </h2>
           </div>
         </div>
 
         <div className="popularRow">
-          {popular.map((item, index) => (
-            <button
-              key={item}
-              onClick={() =>
-                submit(undefined, item, 'search')
-              }
-            >
-              <b>{String(index + 1).padStart(2, '0')}</b>
-              <span>{item}</span>
-              <i>↗</i>
-            </button>
-          ))}
+          {popular.map(
+            (
+              item: string,
+              index: number,
+            ) => (
+              <button
+                key={item}
+                onClick={() =>
+                  submit(
+                    undefined,
+                    item,
+                    'search',
+                  )
+                }
+              >
+                <b>
+                  {String(
+                    index + 1,
+                  ).padStart(
+                    2,
+                    '0',
+                  )}
+                </b>
+
+                <span>
+                  {item}
+                </span>
+
+                <i>↗</i>
+              </button>
+            ),
+          )}
         </div>
       </section>
 
       <section className="container section">
         <div className="sectiontitle">
           <div>
-            <span>ĀTRĀ PIEKĻUVE</span>
-            <h2>Kategorijas</h2>
+            <span>
+              ĀTRĀ PIEKĻUVE
+            </span>
+
+            <h2>
+              Kategorijas
+            </h2>
           </div>
         </div>
 
         <div className="categorygrid">
-          {categories.map(([icon, label, searchQuery]) => (
-            <button
-              key={label}
-              onClick={() =>
-                submit(undefined, searchQuery, 'search')
-              }
-            >
-              <span>{icon}</span>
-              <b>{label}</b>
-              <i>→</i>
-            </button>
-          ))}
+          {categories.map(
+            ([
+              icon,
+              label,
+              searchQuery,
+            ]) => (
+              <button
+                key={
+                  label
+                }
+                onClick={() =>
+                  submit(
+                    undefined,
+                    searchQuery,
+                    'search',
+                  )
+                }
+              >
+                <span>
+                  {icon}
+                </span>
+
+                <b>
+                  {label}
+                </b>
+
+                <i>→</i>
+              </button>
+            ),
+          )}
         </div>
       </section>
     </>

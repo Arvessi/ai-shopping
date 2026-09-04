@@ -4,14 +4,16 @@ import { prisma } from '@/lib/db';
 import { canonicalizeProductTitle, extractVariantData } from '@/lib/dataforseo';
 import { isRestrictedShoppingQuery } from '@/lib/safety';
 import { projectFamilyToLegacy } from '@/lib/catalog';
-import { LATVIA_ELECTRONICS_STORES, type StoreSeed } from '@/lib/store-registry';
+import { LATVIA_ELECTRONICS_STORES, getStoreSeed, type StoreSeed } from '@/lib/store-registry';
 import type { VariantAttributes } from '@/lib/types';
 
-const USER_AGENT = 'CENIQBot/3.1 (+https://ceniq.lv)';
+const USER_AGENT = 'CENIQBot/3.2 (+https://ceniq.lv)';
 const HTML_LIMIT = 2_000_000;
 const SITEMAP_URL_LIMIT = 1500;
-const SITEMAP_DOC_LIMIT = 5;
-const DEFAULT_PAGE_LIMIT = 8;
+const SITEMAP_DOC_LIMIT = 4;
+const DEFAULT_PAGE_LIMIT = 10;
+const QUERY_STORE_LIMIT = Math.min(14, Math.max(6, Number(process.env.CENIQ_QUERY_STORE_LIMIT || 10)));
+const QUERY_PAGES_PER_STORE = Math.min(3, Math.max(1, Number(process.env.CENIQ_QUERY_PAGES_PER_STORE || 3)));
 const RECRAWL_DAYS = 2;
 
 const RECURRING_PRICE_PATTERN =
@@ -388,14 +390,422 @@ function extractInternalLinks(html: string, pageUrl: string, origin: string) {
   return Array.from(links);
 }
 
-function canonicalFamilyTitle(name: string, brand?: string, _model?: string) {
-  // Family identity must be stable across stores and variants. Merchant "model" fields are
-  // often SKU-like codes, so the family is derived from the human product title instead.
-  const canonical = canonicalizeProductTitle(name) || name;
-  if (brand && !canonical.toLowerCase().startsWith(brand.toLowerCase())) {
-    return `${brand} ${canonical}`.replace(/\s+/g, ' ').trim();
+function stripTags(value: string) {
+  return decodeHtmlEntities(value)
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+const QUERY_STOPWORDS = new Set([
+  'the', 'and', 'with', 'for', 'from', 'lidz', 'līdz', 'zem', 'virs', 'best',
+  'good', 'labs', 'laba', 'labu', 'mekle', 'meklē', 'atrast', 'price', 'cena',
+  'jauns', 'jauna', 'new', 'nopirkt', 'pirkt', 'veikals',
+]);
+
+function queryTokens(query: string) {
+  return normalizeText(query)
+    .split(' ')
+    .filter((token) => token.length >= 2 && !QUERY_STOPWORDS.has(token))
+    .slice(0, 7);
+}
+
+function queryMatchScore(value: string, query: string) {
+  const haystack = normalizeText(value);
+  const tokens = queryTokens(query);
+
+  if (!tokens.length) return 0;
+
+  let score = 0;
+  let matched = 0;
+
+  for (const token of tokens) {
+    if (!haystack.includes(token)) continue;
+    matched += 1;
+
+    if (/^\d+$/.test(token)) {
+      score += 4;
+    } else if (/\d/.test(token)) {
+      score += 5;
+    } else if (token.length >= 6) {
+      score += 4;
+    } else {
+      score += 3;
+    }
   }
-  return canonical;
+
+  if (matched === tokens.length) score += 10;
+  if (matched >= Math.min(2, tokens.length)) score += 5;
+
+  return score;
+}
+
+function extractScoredLinks(
+  html: string,
+  pageUrl: string,
+  origin: string,
+  query: string,
+) {
+  const links = new Map<string, { url: string; score: number }>();
+  const regex = /<a\b([^>]*)href=["']([^"'#]+)["']([^>]*)>([\s\S]*?)<\/a>/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(html)) && links.size < 300) {
+    const url = safeUrl(decodeHtmlEntities(match[2]), pageUrl);
+    if (!url || !sameStoreHost(url, origin)) continue;
+    if (NON_PRODUCT_HINT.test(url.toString())) continue;
+
+    const anchor = stripTags(match[4]);
+    const score =
+      queryMatchScore(`${anchor} ${url.pathname}`, query) +
+      Math.max(0, urlScore(url.toString()));
+
+    if (score < 7) continue;
+
+    const key = url.toString();
+    const existing = links.get(key);
+    if (!existing || score > existing.score) {
+      links.set(key, { url: key, score });
+    }
+  }
+
+  return Array.from(links.values()).sort((a, b) => b.score - a.score);
+}
+
+function fillSearchTemplate(template: string, query: string) {
+  const q = encodeURIComponent(query.trim());
+  const plus = encodeURIComponent(query.trim().replace(/\s+/g, '+'));
+  return template
+    .replace(/\{q\}/g, q)
+    .replace(/\{plus\}/g, plus);
+}
+
+function storageHint(value: string) {
+  const normalized = value.toLowerCase();
+  const tb = normalized.match(/(?:^|[^0-9])(\d+(?:[.,]\d+)?)\s*tb(?:[^a-z]|$)/i);
+  if (tb) return `${tb[1].replace(',', '.')}tb`;
+
+  const gb = normalized.match(/(?:^|[^0-9])(64|128|256|512|1024)\s*(?:gb|g)(?:[^a-z]|$)/i);
+  return gb ? `${gb[1]}gb` : '';
+}
+
+function colorHint(value: string) {
+  const normalized = value.toLowerCase();
+  const colors = [
+    'black', 'white', 'pink', 'teal', 'ultramarine', 'blue', 'green',
+    'red', 'yellow', 'purple', 'gray', 'grey', 'silver', 'gold',
+    'midnight', 'starlight', 'titanium',
+  ];
+
+  return colors.find((color) => normalized.includes(color)) || '';
+}
+
+function diversifyQueryPages(
+  items: Array<{ url: string; score: number }>,
+  query: string,
+  limit: number,
+) {
+  const sorted = [...items].sort((a, b) => b.score - a.score);
+  if (sorted.length <= limit) return sorted;
+
+  const requestedStorage = storageHint(query);
+  const chosen: Array<{ url: string; score: number }> = [];
+  const used = new Set<string>();
+
+  const take = (item: { url: string; score: number }) => {
+    if (chosen.length >= limit || used.has(item.url)) return;
+    used.add(item.url);
+    chosen.push(item);
+  };
+
+  if (!requestedStorage) {
+    const seenStorage = new Set<string>();
+
+    for (const item of sorted) {
+      const storage = storageHint(item.url);
+      if (!storage || seenStorage.has(storage)) continue;
+      seenStorage.add(storage);
+      take(item);
+      if (chosen.length >= limit) return chosen;
+    }
+  }
+
+  const seenVariant = new Set<string>();
+  for (const item of sorted) {
+    const storage = storageHint(item.url) || 'base';
+    const color = colorHint(item.url) || 'base';
+    const key = `${storage}|${color}`;
+
+    if (seenVariant.has(key)) continue;
+    seenVariant.add(key);
+    take(item);
+    if (chosen.length >= limit) return chosen;
+  }
+
+  for (const item of sorted) {
+    take(item);
+    if (chosen.length >= limit) break;
+  }
+
+  return chosen;
+}
+
+function searchFormCandidates(html: string, origin: string, query: string) {
+  const candidates = new Set<string>();
+  const formRegex = /<form\b([^>]*)>([\s\S]*?)<\/form>/gi;
+  let formMatch: RegExpExecArray | null;
+
+  while ((formMatch = formRegex.exec(html)) && candidates.size < 4) {
+    const attrs = formMatch[1];
+    const body = formMatch[2];
+
+    const actionMatch = attrs.match(/\baction=["']([^"']+)["']/i);
+    const methodMatch = attrs.match(/\bmethod=["']([^"']+)["']/i);
+    const method = (methodMatch?.[1] || 'get').toLowerCase();
+
+    if (method !== 'get') continue;
+
+    const inputs = Array.from(body.matchAll(/<input\b[^>]*\bname=["']([^"']+)["'][^>]*>/gi))
+      .map((match) => match[1])
+      .filter(Boolean);
+
+    const searchName = inputs.find((name) =>
+      /^(q|query|search|searchterm|keyword|keywords|term|text)$/i.test(name),
+    );
+
+    if (!searchName) continue;
+
+    const action = safeUrl(actionMatch?.[1] || '/', origin);
+    if (!action || !sameStoreHost(action, origin)) continue;
+
+    action.searchParams.set(searchName, query);
+    candidates.add(action.toString());
+  }
+
+  return Array.from(candidates);
+}
+
+async function discoverQueryFromSearchPages(
+  source: any,
+  query: string,
+  robots: RobotsContext,
+) {
+  const store = getStoreSeed(source.slug);
+  const candidates = new Map<string, { url: string; score: number }>();
+
+  const collectSearchPage = async (searchUrl: string) => {
+    const parsed = safeUrl(searchUrl);
+    if (!parsed || !sameStoreHost(parsed, source.origin)) return;
+    if (!robotsAllows(parsed.pathname, robots.rules)) return;
+
+    try {
+      const { response, text } = await fetchText(searchUrl, 5000);
+      if (!response.ok || !/text\/html/i.test(response.headers.get('content-type') || '')) return;
+
+      const pageProducts = jsonLdScripts(text).flatMap((script) => collectProducts(script));
+      for (const product of pageProducts.slice(0, 30)) {
+        const chosen = bestOffer(product);
+        const name = firstString(product?.name);
+        if (!chosen || !name || queryMatchScore(name, query) < 5) continue;
+
+        const url = absoluteProductUrl(product, chosen.offer, searchUrl);
+        const productUrl = safeUrl(url);
+        if (!productUrl || !sameStoreHost(productUrl, source.origin)) continue;
+
+        candidates.set(url, {
+          url,
+          score: 40 + queryMatchScore(name, query),
+        });
+      }
+
+      for (const item of extractScoredLinks(text, searchUrl, source.origin, query).slice(0, 18)) {
+        const existing = candidates.get(item.url);
+        if (!existing || item.score > existing.score) {
+          candidates.set(item.url, item);
+        }
+      }
+    } catch {
+      // Try another search endpoint or sitemap fallback.
+    }
+  };
+
+  const configuredSearchUrls: string[] = Array.from(
+    new Set<string>(
+      (store?.searchTemplates || []).map((template: string) =>
+        fillSearchTemplate(template, query),
+      ),
+    ),
+  ).slice(0, 2);
+
+  for (const searchUrl of configuredSearchUrls) {
+    await collectSearchPage(searchUrl);
+    if (candidates.size >= QUERY_PAGES_PER_STORE * 2) break;
+  }
+
+  // Only inspect the homepage for a search form when the configured endpoints did not help.
+  if (candidates.size < QUERY_PAGES_PER_STORE) {
+    try {
+      const { response, text } = await fetchText(source.origin, 4000);
+      if (response.ok && /text\/html/i.test(response.headers.get('content-type') || '')) {
+        const discovered = searchFormCandidates(text, source.origin, query).slice(0, 2);
+        for (const searchUrl of discovered) {
+          await collectSearchPage(searchUrl);
+          if (candidates.size >= QUERY_PAGES_PER_STORE * 2) break;
+        }
+      }
+    } catch {
+      // Sitemap fallback handles stores without a discoverable search form.
+    }
+  }
+
+  return diversifyQueryPages(
+    Array.from(candidates.values()),
+    query,
+    QUERY_PAGES_PER_STORE * 3,
+  );
+}
+
+async function discoverQueryFromSitemaps(
+  source: any,
+  query: string,
+  robots: RobotsContext,
+) {
+  const fallback = [
+    new URL('/sitemap.xml', source.origin).toString(),
+    new URL('/sitemap_index.xml', source.origin).toString(),
+    new URL('/sitemap-index.xml', source.origin).toString(),
+  ];
+
+  const queue = Array.from(new Set([...robots.sitemaps, ...fallback]));
+  const visited = new Set<string>();
+  const candidates = new Map<string, { url: string; score: number }>();
+
+  while (
+    queue.length &&
+    visited.size < Math.min(3, SITEMAP_DOC_LIMIT) &&
+    candidates.size < QUERY_PAGES_PER_STORE * 8
+  ) {
+    const sitemapUrl = queue.shift()!;
+    if (visited.has(sitemapUrl)) continue;
+    visited.add(sitemapUrl);
+
+    try {
+      const { response, text } = await fetchText(sitemapUrl, 4500);
+      if (!response.ok) continue;
+
+      const parsed = xmlLocations(text);
+
+      const childSitemaps = parsed.sitemapUrls
+        .filter((url) => /product|produk|prece|shop|catalog|sitemap/i.test(url))
+        .sort((a, b) => {
+          const aScore = queryMatchScore(a, query) + urlScore(a, a);
+          const bScore = queryMatchScore(b, query) + urlScore(b, b);
+          return bScore - aScore;
+        });
+
+      for (const child of childSitemaps.slice(0, 10)) {
+        if (!visited.has(child)) queue.push(child);
+      }
+
+      for (const rawUrl of parsed.pageUrls) {
+        const url = safeUrl(rawUrl);
+        if (!url || !sameStoreHost(url, source.origin)) continue;
+        if (!robotsAllows(url.pathname, robots.rules)) continue;
+        if (NON_PRODUCT_HINT.test(url.toString())) continue;
+
+        const match = queryMatchScore(url.pathname, query);
+        if (match < 5) continue;
+
+        const score = 15 + match + Math.max(0, urlScore(url.toString(), sitemapUrl));
+        const key = url.toString();
+        const existing = candidates.get(key);
+        if (!existing || score > existing.score) {
+          candidates.set(key, { url: key, score });
+        }
+      }
+    } catch {
+      // Skip a bad sitemap document.
+    }
+  }
+
+  return diversifyQueryPages(
+    Array.from(candidates.values()),
+    query,
+    QUERY_PAGES_PER_STORE * 3,
+  );
+}
+
+async function discoverQueryPagesForSource(
+  source: any,
+  query: string,
+) {
+  const robots = await loadRobots(source);
+
+  if (!robots.allowed) {
+    return { source, robots, pages: [] as Array<{ url: string; score: number }> };
+  }
+
+  const searchPages = await discoverQueryFromSearchPages(
+    source,
+    query,
+    robots,
+  );
+
+  const sitemapPages =
+    searchPages.length >= QUERY_PAGES_PER_STORE
+      ? []
+      : await discoverQueryFromSitemaps(
+          source,
+          query,
+          robots,
+        );
+
+  const merged = new Map<string, { url: string; score: number }>();
+
+  for (const item of [...searchPages, ...sitemapPages]) {
+    const existing = merged.get(item.url);
+    if (!existing || item.score > existing.score) merged.set(item.url, item);
+  }
+
+  return {
+    source,
+    robots,
+    pages: diversifyQueryPages(
+      Array.from(merged.values()),
+      query,
+      QUERY_PAGES_PER_STORE,
+    ),
+  };
+}
+
+function canonicalFamilyTitle(name: string, brand?: string, _model?: string) {
+  // One consumer product family must be identical across stores even when titles put the
+  // brand/category in a different position: "Apple iPhone 16" vs "iPhone 16 Apple".
+  let canonical = canonicalizeProductTitle(name) || name;
+
+  canonical = canonical
+    .replace(
+      /\b(mobilais telefons|viedtālrunis|viedtalrunis|smartphone|mobile phone|telefons)\b/gi,
+      ' ',
+    )
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!brand) return canonical;
+
+  const escaped = brand.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  canonical = canonical
+    .replace(new RegExp(`^${escaped}\\s+`, 'i'), '')
+    .replace(new RegExp(`\\s+${escaped}$`, 'i'), '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return `${brand} ${canonical}`
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function productLooksElectronic(name: string, category?: string) {
@@ -411,17 +821,28 @@ function variantKey(
   mpn?: string,
   sku?: string,
 ) {
+  // GTIN is exact. After that prefer visible consumer attributes over retailer SKU/MPN,
+  // because SKU and regional MPN values often differ between shops for the same variant.
   if (gtin) return `gtin:${gtin}`;
-  if (mpn) return `mpn:${normalizeText(mpn)}`;
-  if (sku) return `sku:${normalizeText(sku)}`;
 
   const attrString = Object.entries(attrs)
-    .filter(([, value]) => Boolean(value))
+    .filter(
+      ([key, value]) =>
+        Boolean(value) &&
+        !(key === 'condition' && value === 'New'),
+    )
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([key, value]) => `${key}:${normalizeText(String(value))}`)
     .join('|');
 
-  return `attrs:${hash(`${familyKey}|${attrString}`)}`;
+  if (attrString) {
+    return `attrs:${hash(`${familyKey}|${attrString}`)}`;
+  }
+
+  if (mpn) return `mpn:${normalizeText(mpn)}`;
+  if (sku) return `sku:${normalizeText(sku)}`;
+
+  return `base:${hash(familyKey)}`;
 }
 
 function offerKey(sourceId: string, merchantId: string, external: string) {
@@ -501,7 +922,7 @@ async function loadRobots(source: any) {
   const robotsUrl = new URL('/robots.txt', source.origin).toString();
 
   try {
-    const { response, text } = await fetchText(robotsUrl, 6500);
+    const { response, text } = await fetchText(robotsUrl, 4500);
 
     if (response.status === 401 || response.status === 403) {
       await prisma.crawlSource.update({
@@ -678,6 +1099,26 @@ export async function seedCrawlerSource(sourceId: string) {
   };
 }
 
+function crawlerColor(name: string) {
+  const rules: Array<[RegExp, string]> = [
+    [/\bteal\b/i, 'Teal'],
+    [/\bultramarine\b/i, 'Ultramarine'],
+    [/\bspace black\b/i, 'Space Black'],
+    [/\bmidnight\b/i, 'Midnight'],
+    [/\bstarlight\b/i, 'Starlight'],
+    [/\bdesert titanium\b/i, 'Desert Titanium'],
+    [/\bnatural titanium\b/i, 'Natural Titanium'],
+    [/\bwhite titanium\b/i, 'White Titanium'],
+    [/\bblack titanium\b/i, 'Black Titanium'],
+  ];
+
+  for (const [pattern, value] of rules) {
+    if (pattern.test(name)) return value;
+  }
+
+  return undefined;
+}
+
 async function upsertJsonLdProduct(source: any, pageUrl: string, product: any) {
   const chosen = bestOffer(product);
   if (!chosen) return null;
@@ -706,7 +1147,7 @@ async function upsertJsonLdProduct(source: any, pageUrl: string, product: any) {
   const attrs: VariantAttributes = {
     storage: extracted.storage,
     ram: extracted.ram,
-    color: firstString(product.color) || extracted.color,
+    color: firstString(product.color) || crawlerColor(name) || extracted.color,
     connectivity: extracted.connectivity,
     size: firstString(product.size) || extracted.size,
     condition: /used|refurbished|renewed|demo|lietot|atjaun/i.test(
@@ -762,7 +1203,33 @@ async function upsertJsonLdProduct(source: any, pageUrl: string, product: any) {
   });
 
   const effectiveFamilyKey = identityVariant?.family.canonicalKey || familyKey;
-  const vKey = identityVariant?.variantKey || variantKey(effectiveFamilyKey, attrs, gtin, mpn, sku);
+
+  const knownAttributeFilters: Record<string, unknown> = {};
+  for (const axis of ['storage', 'ram', 'color', 'connectivity', 'size'] as const) {
+    const value = attrs[axis];
+    if (value) {
+      knownAttributeFilters[axis] = {
+        equals: value,
+        mode: 'insensitive',
+      };
+    }
+  }
+
+  const attributeVariant =
+    !identityVariant && Object.keys(knownAttributeFilters).length
+      ? await prisma.catalogVariant.findFirst({
+          where: {
+            familyId: family.id,
+            condition: attrs.condition || 'New',
+            ...knownAttributeFilters,
+          },
+        })
+      : null;
+
+  const vKey =
+    identityVariant?.variantKey ||
+    attributeVariant?.variantKey ||
+    variantKey(effectiveFamilyKey, attrs, gtin, mpn, sku);
 
   const variant = await prisma.catalogVariant.upsert({
     where: {
@@ -823,7 +1290,7 @@ async function upsertJsonLdProduct(source: any, pageUrl: string, product: any) {
   });
 
   if (peerOffers.length >= 2) {
-    const peerPrices = peerOffers.map((item) => item.price).sort((a, b) => a - b);
+    const peerPrices = peerOffers.map((item: { price: number }) => item.price).sort((a: number, b: number) => a - b);
     const middle = Math.floor(peerPrices.length / 2);
     const peerMedian = peerPrices.length % 2
       ? peerPrices[middle]
@@ -886,7 +1353,7 @@ async function upsertJsonLdProduct(source: any, pageUrl: string, product: any) {
   });
 
   if (activeVariantOffers.length >= 3) {
-    const prices = activeVariantOffers.map((item) => item.price);
+    const prices = activeVariantOffers.map((item: { id: string; price: number }) => item.price);
     const middle = Math.floor(prices.length / 2);
     const med = prices.length % 2
       ? prices[middle]
@@ -1095,16 +1562,13 @@ export async function crawlSourceBatch(sourceId: string, limit = DEFAULT_PAGE_LI
   };
 }
 
-function queryTokens(query: string) {
-  return normalizeText(query)
-    .split(' ')
-    .filter((token) => token.length >= 3)
-    .slice(0, 5);
-}
-
-async function findQueryPages(query: string, limit: number) {
+async function existingQueryPages(query: string, limit: number) {
   const tokens = queryTokens(query);
   if (!tokens.length) return [];
+
+  const tokenFilters = tokens.map((token) => ({
+    url: { contains: token, mode: 'insensitive' as const },
+  }));
 
   return prisma.crawlPage.findMany({
     where: {
@@ -1112,83 +1576,230 @@ async function findQueryPages(query: string, limit: number) {
         active: true,
         robotsAllowed: { not: false },
       },
-      AND: [
-        ...tokens.map((token) => ({
-          url: { contains: token, mode: 'insensitive' as const },
-        })),
+      OR: [
         {
-          OR: [
-            { status: 'pending' },
-            { nextCrawlAt: { lte: new Date() } },
-          ],
+          AND: tokenFilters,
+        },
+        {
+          AND: tokenFilters.slice(0, Math.min(2, tokenFilters.length)),
         },
       ],
+      NOT: { status: 'blocked' },
     },
     include: {
       source: true,
     },
-    orderBy: { priority: 'desc' },
-    take: Math.min(30, Math.max(4, limit * 4)),
+    orderBy: [
+      { priority: 'desc' },
+      { lastCrawledAt: 'asc' },
+    ],
+    take: Math.min(40, Math.max(8, limit * 5)),
   });
 }
 
-export async function crawlQueryCandidates(query: string, limit = 8) {
-  const tokens = queryTokens(query);
-  if (!tokens.length) return { pages: 0, products: 0, seeded: null as string | null };
+async function processDiscoveredSource(
+  source: any,
+  query: string,
+) {
+  try {
+    const discovered = await discoverQueryPagesForSource(source, query);
 
-  let candidates = await findQueryPages(query, limit);
-  let seeded: string | null = null;
+    if (!discovered.robots.allowed || !discovered.pages.length) {
+      return {
+        source: source.slug,
+        pages: 0,
+        products: 0,
+        blocked: !discovered.robots.allowed,
+      };
+    }
 
-  const candidateSourceCount = new Set(candidates.map((item) => item.sourceId)).size;
+    await enqueuePages(
+      source.id,
+      discovered.pages.map((item) => ({
+        ...item,
+        kind: 'query',
+        depth: 0,
+      })),
+    );
 
-  // While the catalog is young, a real user search also teaches CENIQ one new store.
-  // This prevents waiting weeks for a full background crawl, while still respecting robots.txt.
-  if (candidateSourceCount < Math.min(4, limit)) {
-    const unseeded = await prisma.crawlSource.findFirst({
+    const savedPages = await prisma.crawlPage.findMany({
       where: {
-        active: true,
-        lastSeededAt: null,
+        sourceId: source.id,
+        urlHash: {
+          in: discovered.pages.map((item) => hash(item.url)),
+        },
       },
       orderBy: { priority: 'desc' },
+      take: QUERY_PAGES_PER_STORE,
     });
 
-    if (unseeded) {
-      const seed = await seedCrawlerSource(unseeded.id).catch(() => null);
-      if (seed && !('error' in seed)) seeded = unseeded.slug;
-      candidates = await findQueryPages(query, limit);
+    let products = 0;
+    let blocked = false;
+
+    for (let index = 0; index < savedPages.length; index += 1) {
+      const page = savedPages[index];
+
+      try {
+        const result = await processPage(
+          page,
+          source,
+          discovered.robots,
+        );
+
+        products += result.products;
+        blocked ||= result.blocked;
+      } catch (error) {
+        await prisma.crawlPage.update({
+          where: { id: page.id },
+          data: {
+            status: 'error',
+            attempts: { increment: 1 },
+            lastError:
+              error instanceof Error
+                ? error.message.slice(0, 1000)
+                : 'Query crawler error',
+            lastCrawledAt: new Date(),
+            nextCrawlAt: new Date(Date.now() + 12 * 60 * 60 * 1000),
+          },
+        }).catch(() => undefined);
+      }
+
+      if (index < savedPages.length - 1) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.min(650, source.crawlDelayMs || 650)),
+        );
+      }
     }
+
+    await prisma.crawlSource.update({
+      where: { id: source.id },
+      data: {
+        lastRunAt: new Date(),
+        lastError: null,
+      },
+    }).catch(() => undefined);
+
+    return {
+      source: source.slug,
+      pages: savedPages.length,
+      products,
+      blocked,
+    };
+  } catch (error) {
+    await prisma.crawlSource.update({
+      where: { id: source.id },
+      data: {
+        lastError:
+          error instanceof Error
+            ? error.message.slice(0, 1000)
+            : 'Query discovery failed',
+        lastRunAt: new Date(),
+      },
+    }).catch(() => undefined);
+
+    return {
+      source: source.slug,
+      pages: 0,
+      products: 0,
+      blocked: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : 'Query discovery failed',
+    };
+  }
+}
+
+export async function crawlQueryCandidates(query: string, limit = QUERY_STORE_LIMIT) {
+  const tokens = queryTokens(query);
+
+  if (!tokens.length) {
+    return {
+      pages: 0,
+      products: 0,
+      storesTried: 0,
+      storeResults: [],
+    };
   }
 
-  const chosen: typeof candidates = [];
-  const seenSources = new Set<string>();
+  await ensureCrawlerRegistry();
 
-  for (const candidate of candidates) {
-    if (seenSources.has(candidate.sourceId)) continue;
-    seenSources.add(candidate.sourceId);
-    chosen.push(candidate);
-    if (chosen.length >= limit) break;
+  const existing = await existingQueryPages(query, limit);
+  const existingBySource = new Map<string, typeof existing>();
+
+  for (const page of existing) {
+    existingBySource.set(page.sourceId, [
+      ...(existingBySource.get(page.sourceId) || []),
+      page,
+    ]);
   }
 
   let products = 0;
+  let pages = 0;
 
-  // One page per different store: safe to run a few in parallel without hammering one host.
-  const results = await Promise.allSettled(
-    chosen.map((page) => processPage(page, page.source)),
+  // First consume already-known matching URLs. This is cheap and makes repeated searches fast.
+  const existingChosen = Array.from(existingBySource.values())
+    .slice(0, Math.min(limit, 5));
+
+  const cachedResults = await Promise.allSettled(
+    existingChosen.map(async (items) => {
+      const page = items[0];
+      return processPage(page, page.source);
+    }),
   );
 
-  for (const result of results) {
-    if (result.status === 'fulfilled') products += result.value.products;
+  for (const result of cachedResults) {
+    if (result.status === 'fulfilled') {
+      pages += 1;
+      products += result.value.products;
+    }
   }
 
-  return { pages: chosen.length, products, seeded };
+  const sourceLimit = Math.min(
+    QUERY_STORE_LIMIT,
+    Math.max(6, limit),
+  );
+
+  // Query-discovery is deliberately spread across different stores, never many requests to one host.
+  const sources = await prisma.crawlSource.findMany({
+    where: {
+      active: true,
+      robotsAllowed: { not: false },
+    },
+    include: { merchant: true },
+    orderBy: [
+      { priority: 'desc' },
+      { lastRunAt: 'asc' },
+    ],
+    take: sourceLimit,
+  });
+
+  const storeResults = await Promise.all(
+    sources.map((source: any) =>
+      processDiscoveredSource(source, query),
+    ),
+  );
+
+  for (const result of storeResults) {
+    pages += result.pages;
+    products += result.products;
+  }
+
+  return {
+    pages,
+    products,
+    storesTried: sources.length,
+    storeResults,
+  };
 }
+
 
 export async function runCrawlerCycle(pageLimit = DEFAULT_PAGE_LIMIT) {
   await ensureCrawlerRegistry();
 
   const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
-  const needsSeed = await prisma.crawlSource.findFirst({
+  const needsSeed = await prisma.crawlSource.findMany({
     where: {
       active: true,
       OR: [
@@ -1197,20 +1808,25 @@ export async function runCrawlerCycle(pageLimit = DEFAULT_PAGE_LIMIT) {
       ],
     },
     orderBy: [
-      { priority: 'desc' },
       { lastSeededAt: 'asc' },
+      { priority: 'desc' },
     ],
+    take: 4,
   });
 
-  let seedResult: any = null;
-  if (needsSeed) {
-    seedResult = await seedCrawlerSource(needsSeed.id).catch((error) => ({
-      source: needsSeed.slug,
-      error: error instanceof Error ? error.message : 'Seed failed',
-    }));
+  const seedResults = [];
+  for (const source of needsSeed) {
+    try {
+      seedResults.push(await seedCrawlerSource(source.id));
+    } catch (error) {
+      seedResults.push({
+        source: source.slug,
+        error: error instanceof Error ? error.message : 'Seed failed',
+      });
+    }
   }
 
-  const source = await prisma.crawlSource.findFirst({
+  const sources = await prisma.crawlSource.findMany({
     where: {
       active: true,
       pages: {
@@ -1227,17 +1843,46 @@ export async function runCrawlerCycle(pageLimit = DEFAULT_PAGE_LIMIT) {
       { lastRunAt: 'asc' },
       { priority: 'desc' },
     ],
+    take: 4,
   });
 
-  const crawlResult = source
-    ? await crawlSourceBatch(source.id, pageLimit)
-    : null;
+  const crawlResults = [];
+  for (const source of sources) {
+    try {
+      crawlResults.push(
+        await crawlSourceBatch(
+          source.id,
+          Math.min(8, Math.max(2, Math.ceil(pageLimit / Math.max(1, sources.length)))),
+        ),
+      );
+    } catch (error) {
+      crawlResults.push({
+        source: source.slug,
+        error: error instanceof Error ? error.message : 'Crawl failed',
+      });
+    }
+  }
 
-  return { seedResult, crawlResult };
+  return {
+    seededStores: seedResults,
+    crawledStores: crawlResults,
+  };
 }
 
 export async function crawlerStatus() {
-  const [sources, pages, products, pending, blocked, errors] = await Promise.all([
+  await ensureCrawlerRegistry();
+
+  const [
+    sources,
+    pages,
+    productPages,
+    pending,
+    blocked,
+    errors,
+    families,
+    variants,
+    offers,
+  ] = await Promise.all([
     prisma.crawlSource.findMany({
       where: { active: true },
       include: { merchant: true },
@@ -1248,10 +1893,13 @@ export async function crawlerStatus() {
     prisma.crawlPage.count({ where: { status: 'pending' } }),
     prisma.crawlPage.count({ where: { status: 'blocked' } }),
     prisma.crawlPage.count({ where: { status: 'error' } }),
+    prisma.catalogFamily.count({ where: { active: true } }),
+    prisma.catalogVariant.count({ where: { active: true } }),
+    prisma.catalogOffer.count({ where: { active: true } }),
   ]);
 
   return {
-    stores: sources.map((source) => ({
+    stores: sources.map((source: any) => ({
       slug: source.slug,
       name: source.merchant.name,
       origin: source.origin,
@@ -1260,6 +1908,15 @@ export async function crawlerStatus() {
       lastRunAt: source.lastRunAt,
       lastError: source.lastError,
     })),
-    totals: { pages, products, pending, blocked, errors },
+    totals: {
+      pages,
+      productPages,
+      pending,
+      blocked,
+      errors,
+      catalogFamilies: families,
+      catalogVariants: variants,
+      catalogOffers: offers,
+    },
   };
 }
