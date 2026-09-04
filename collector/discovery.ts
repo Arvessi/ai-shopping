@@ -17,6 +17,7 @@ export type DiscoveryResult = {
   source: DiscoverySource;
   query: string;
   candidates: DiscoveryCandidate[];
+  usageCredits?: number;
 };
 
 export type DiscoveryOptions = {
@@ -84,12 +85,15 @@ async function tavilySearch(query: string, options: DiscoveryOptions): Promise<D
     body: JSON.stringify({
       query,
       topic: "general",
-      // Keep Tavily permanently on the 1-credit basic search path unless this
-      // constant is deliberately changed in code review.
+      // CENIQ discovery stays on Tavily's one-credit path. This constant must
+      // be deliberately changed in code review to use a more expensive mode.
       search_depth: TAVILY_SEARCH_DEPTH,
       max_results: Math.min(Math.max(options.maxResults ?? 20, 1), MAX_RESULTS_PER_DISCOVERY_CALL),
       include_answer: false,
       include_raw_content: false,
+      include_images: false,
+      include_usage: true,
+      safe_search: true,
       ...(knownOnly ? { include_domains: knownMerchantDomains() } : {}),
       ...(options.country ? { country: options.country } : { country: "latvia" }),
     }),
@@ -100,13 +104,21 @@ async function tavilySearch(query: string, options: DiscoveryOptions): Promise<D
     throw new Error(`Tavily search failed: HTTP ${response.status}`);
   }
 
-  const payload = await response.json() as { results?: Array<Record<string, unknown>> };
+  const payload = await response.json() as {
+    results?: Array<Record<string, unknown>>;
+    usage?: { credits?: number };
+  };
   const candidates = (payload.results ?? [])
     .map((item) => normalizeCandidate("tavily", item))
     .filter((item): item is DiscoveryCandidate => Boolean(item))
     .filter((item) => !knownOnly || Boolean(item.merchantSlug));
 
-  return { source: "tavily", query, candidates };
+  return {
+    source: "tavily",
+    query,
+    candidates,
+    usageCredits: typeof payload.usage?.credits === "number" ? payload.usage.credits : undefined,
+  };
 }
 
 async function braveSearch(query: string, options: DiscoveryOptions): Promise<DiscoveryResult> {
