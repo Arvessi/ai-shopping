@@ -13,6 +13,7 @@ const COLOR_WORDS = /\b(?:black|midnight|obsidian|graphite|melns|melna|white|sta
 const CATEGORY_RULES: Array<[RegExp, string]> = [
   [/\b(?:viedt[aā]lrunis|telefoni?|smartphone|mobile phone|mobilais telefons)\b/gi, 'phone'],
   [/\b(?:laptop|notebook|portat[iī]vais dators?)\b/gi, 'laptop'],
+  [/\b(?:desktop|desktop computer|galda dators?|stacion[aā]rais dators?|computer)\b/gi, 'computer'],
   [/\b(?:monitor|monitors)\b/gi, 'monitor'],
   [/\b(?:televizors?|television|tv)\b/gi, 'tv'],
   [/\b(?:headphones?|earbuds?|austi[nņ]as?)\b/gi, 'headphones'],
@@ -22,6 +23,8 @@ const CATEGORY_RULES: Array<[RegExp, string]> = [
   [/\b(?:router|r[uū]teris)\b/gi, 'router'],
   [/\b(?:smartwatch|viedpulkstenis)\b/gi, 'smartwatch'],
 ];
+
+const CANONICAL_CATEGORIES = /\b(phone|laptop|computer|monitor|tv|headphones|speaker|camera|printer|router|smartwatch)\s+\1\b/gi;
 
 function tidy(value: string) {
   return value.replace(/[|–—]+/g, ' - ').replace(/\s+/g, ' ').replace(/^[-\s]+|[-\s]+$/g, '').trim();
@@ -60,6 +63,7 @@ function normalizeKnownPhones(title: string) {
 function normalizeCategoryWords(value: string) {
   let result = value;
   for (const [pattern, replacement] of CATEGORY_RULES) result = result.replace(pattern, ` ${replacement} `);
+  for (let pass = 0; pass < 2; pass += 1) result = result.replace(CANONICAL_CATEGORIES, '$1');
   return result;
 }
 
@@ -78,7 +82,6 @@ function cleanGenericTitle(title: string) {
 
   value = normalizeCategoryWords(value);
   return value
-    .replace(/\b(?:phone|laptop|monitor|tv|headphones|speaker|camera|printer|router|smartwatch)(?:\s+\1)+\b/gi, '$1')
     .replace(/\s*[,;|]+\s*/g, ' ')
     .replace(/\s+-\s*$/g, ' ')
     .replace(/\s+/g, ' ')
