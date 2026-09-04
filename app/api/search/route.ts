@@ -13,6 +13,7 @@ import {
   mapShoppingCandidates,
 } from '@/lib/canonical/dataforseo-client';
 import { discoverLatvianStoreCandidates } from '@/lib/canonical/store-discovery';
+import { shapeCanonicalResults } from '@/lib/canonical/result-shaping';
 
 export const maxDuration = 30;
 
@@ -58,9 +59,6 @@ export async function POST(request: Request) {
       })
       .catch(() => undefined);
 
-    // Repair offers that were ingested before the current family-title normalizer.
-    // This makes old Dateks/Bite/Euronics/etc. offers converge into one stable
-    // family instead of waiting until each store happens to reappear in a live SERP.
     let recanonicalizedOfferCount = 0;
     try {
       recanonicalizedOfferCount = await recanonicalizeExistingOffers(q);
@@ -68,7 +66,8 @@ export async function POST(request: Request) {
       console.error('CENIQ canonical repair:', repairError);
     }
 
-    let results = await searchCanonicalCatalog(q);
+    let rawResults = await searchCanonicalCatalog(q);
+    let results = shapeCanonicalResults(rawResults, q);
     let source = recanonicalizedOfferCount > 0 ? 'canonical-repaired' : 'canonical-catalog';
     let liveCandidateCount = 0;
     let lvStoreCandidateCount = 0;
@@ -97,11 +96,9 @@ export async function POST(request: Request) {
       const discovered = [...liveCandidates, ...storeCandidates];
       if (discovered.length) {
         await ingestCandidates(discovered);
-
-        // A discovery pass can update source keys that used to live in old product
-        // families. Run the cheap DB-only repair once more before reading results.
         recanonicalizedOfferCount += await recanonicalizeExistingOffers(q).catch(() => 0);
-        results = await searchCanonicalCatalog(q);
+        rawResults = await searchCanonicalCatalog(q);
+        results = shapeCanonicalResults(rawResults, q);
 
         if (results.length) {
           source = storeCandidates.length
@@ -130,6 +127,7 @@ export async function POST(request: Request) {
       lvStoreCandidateCount,
       recanonicalizedOfferCount,
       diagnostics: {
+        rawProductGroups: rawResults.length,
         productGroups: results.length,
         bestCoverage,
         bestVariants,
@@ -140,6 +138,7 @@ export async function POST(request: Request) {
           variants: product.catalogVariants?.filter((variant) => variant.offerCount > 0).length || 0,
           offers: product.offers?.length || 0,
           hasImage: Boolean(product.image),
+          variantAxes: Array.from(new Set((product.catalogVariants || []).flatMap((variant) => Object.keys(variant.attributes || {})))),
         })),
       },
       enrichment: {
