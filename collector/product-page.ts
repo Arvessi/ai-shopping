@@ -69,10 +69,12 @@ function numericPrice(value: unknown): number | undefined {
 }
 
 const blockedCatalogTerms = [
-  /\b(ammunition|firearm|rifle|shotgun|handgun)\b/i,
-  /\b(vape|e-cigarette|nicotine)\b/i,
-  /\b(casino|sportsbook|betting)\b/i,
-  /\b(vodka|whisky|whiskey|beer|wine)\b/i,
+  /\b(ammunition|firearm|rifle|shotgun|handgun|switchblade|taser|pepper spray|mace)\b/i,
+  /\b(vape|e-cigarette|nicotine|cigarette|cigar)\b/i,
+  /\b(casino|sportsbook|betting|prediction market)\b/i,
+  /\b(vodka|whisky|whiskey|beer|wine|rum|gin|tequila)\b/i,
+  /\b(cannabis|marijuana|thc|cbd|psychedelic|magic mushroom)\b/i,
+  /\b(steroid|anabolic|dnp diet)\b/i,
 ];
 
 export function isAllowedCatalogItem(text: string): boolean {
