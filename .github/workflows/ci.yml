@@ -18,12 +18,6 @@ jobs:
       - name: Collector v2 tests
         run: node --experimental-strip-types --test tests/collector-v2.test.ts
       - run: npm run typecheck
-      - name: Probe public merchant catalogue access
-        if: github.event_name == 'push' && github.ref == 'refs/heads/rebuild-v2'
-        run: npm run collector:probe
-      - name: Diagnose sitemap URL patterns
-        if: github.event_name == 'push' && github.ref == 'refs/heads/rebuild-v2'
-        run: node --experimental-strip-types scripts/collector-url-diagnostics.ts
       - name: Diagnose M79 product page structure
         if: github.event_name == 'push' && github.ref == 'refs/heads/rebuild-v2'
         run: node --experimental-strip-types scripts/m79-page-diagnostics.ts
