@@ -1,48 +1,18 @@
 const ACCESSORY = /\b(?:case|cover|screen protector|glass|charger|adapter|cable|maci[nņ]s|vaci[nņ]s|aizsargstikls)\b/i;
 
 const KNOWN_BRANDS = [
-  'Apple',
-  'Samsung',
-  'Xiaomi',
-  'Google',
-  'Sony',
-  'LG',
-  'Philips',
-  'Lenovo',
-  'ASUS',
-  'Acer',
-  'Dell',
-  'HP',
-  'Huawei',
-  'OnePlus',
-  'Nothing',
-  'Motorola',
-  'MSI',
-  'Gigabyte',
-  'AOC',
-  'BenQ',
-  'Canon',
-  'Nikon',
-  'Fujifilm',
-  'Panasonic',
-  'JBL',
-  'Bose',
-  'Logitech',
-  'Razer',
-  'Corsair',
+  'Apple', 'Samsung', 'Xiaomi', 'Google', 'Sony', 'LG', 'Philips', 'Lenovo', 'ASUS', 'Acer', 'Dell', 'HP',
+  'Huawei', 'OnePlus', 'Nothing', 'Motorola', 'MSI', 'Gigabyte', 'AOC', 'BenQ', 'Canon', 'Nikon', 'Fujifilm',
+  'Panasonic', 'JBL', 'Bose', 'Logitech', 'Razer', 'Corsair',
 ];
 
 const MERCHANT_SUFFIX = /\s+-\s+(?:Euronics|Dateks|AiO|Baltic Data|Bite|Tet|LMT|Tele2|220\.lv|1a\.lv|RD Electronics|Discover\.lv|Bigbox\.lv|M79|707\.lv|24\.lv)\b.*$/i;
 const CATEGORY_WORDS = /\b(?:produkts?|viedt[aā]lrunis|telefoni?|smartphone|mobile phone|mobilais telefons|laptop|notebook|portat[iī]vais dators?|dators?|monitor|monitors|televizors?|television|tv|headphones?|earbuds?|austi[nņ]as?|speaker|ska[lļ]runis|camera|kamera|printer|printeris|router|r[uū]teris|smartwatch|viedpulkstenis)\b/gi;
-const MARKETING_WORDS = /\b(?:wireless|bluetooth|noise cancelling|noise canceling|anc|smart|gaming|new|jauns|jauna)\b/gi;
+const LOW_SIGNAL_WORDS = /\b(?:wireless|bluetooth|noise cancelling|noise canceling|anc|new|jauns|jauna)\b/gi;
 const COLOR_WORDS = /\b(?:black|midnight|obsidian|graphite|melns|melna|white|starlight|porcelain|balts|balta|navy|blue|ultramarine|zils|zila|green|mint|teal|zals|zala|gray|grey|silver|peleks|peleka|sudraba|pink|rose|roza|red|sarkans|sarkana|purple|violet|violets|violeta|gold|zelta)\b/gi;
 
 function tidy(value: string) {
-  return value
-    .replace(/[|–—]+/g, ' - ')
-    .replace(/\s+/g, ' ')
-    .replace(/^[-\s]+|[-\s]+$/g, '')
-    .trim();
+  return value.replace(/[|–—]+/g, ' - ').replace(/\s+/g, ' ').replace(/^[-\s]+|[-\s]+$/g, '').trim();
 }
 
 function escapeRegex(value: string) {
@@ -59,14 +29,7 @@ function normalizeKnownPhones(title: string) {
   if (iphone) {
     const rawModifier = iphone[2] ? 'e' : iphone[3];
     const modifier = rawModifier
-      ? rawModifier
-          .replace(/\s+/g, ' ')
-          .replace(/\bpro\b/i, 'Pro')
-          .replace(/\bmax\b/i, 'Max')
-          .replace(/\bplus\b/i, 'Plus')
-          .replace(/\bair\b/i, 'Air')
-          .replace(/\bmini\b/i, 'Mini')
-          .replace(/\bse\b/i, 'SE')
+      ? rawModifier.replace(/\s+/g, ' ').replace(/\bpro\b/i, 'Pro').replace(/\bmax\b/i, 'Max').replace(/\bplus\b/i, 'Plus').replace(/\bair\b/i, 'Air').replace(/\bmini\b/i, 'Mini').replace(/\bse\b/i, 'SE')
       : '';
     return { title: `Apple iPhone ${iphone[1]}${modifier === 'e' ? 'e' : modifier ? ` ${modifier}` : ''}`, brand: 'Apple' };
   }
@@ -79,7 +42,6 @@ function normalizeKnownPhones(title: string) {
       : '';
     return { title: `Samsung Galaxy ${model}${modifier ? ` ${modifier}` : ''}`, brand: 'Samsung' };
   }
-
   return null;
 }
 
@@ -95,7 +57,7 @@ function cleanGenericTitle(title: string) {
     .replace(/\b\d{2,3}\s*Hz\b/gi, ' ')
     .replace(COLOR_WORDS, ' ')
     .replace(CATEGORY_WORDS, ' ')
-    .replace(MARKETING_WORDS, ' ')
+    .replace(LOW_SIGNAL_WORDS, ' ')
     .replace(/\s*[,;|]+\s*/g, ' ')
     .replace(/\s+-\s*$/g, ' ')
     .replace(/\s+/g, ' ')
@@ -107,17 +69,12 @@ export function canonicalizeMerchantProductTitle(rawTitle: string, explicitBrand
   const title = tidy(rawTitle);
   const brand = inferMerchantBrand(title, explicitBrand);
 
-  // Keep accessories distinct from their parent device families.
   if (!ACCESSORY.test(title)) {
     const phone = normalizeKnownPhones(title);
     if (phone) return phone;
   }
 
   let cleaned = cleanGenericTitle(title);
-
-  if (brand && !new RegExp(`^${escapeRegex(brand)}\\b`, 'i').test(cleaned)) {
-    cleaned = `${brand} ${cleaned}`.trim();
-  }
-
+  if (brand && !new RegExp(`^${escapeRegex(brand)}\\b`, 'i').test(cleaned)) cleaned = `${brand} ${cleaned}`.trim();
   return { title: cleaned || title, brand };
 }
