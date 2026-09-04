@@ -33,6 +33,8 @@ function plainText(html: string): string {
       .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
       .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
       .replace(/<[^>]+>/g, " ")
+      .replace(/&nbsp;/gi, " ")
+      .replace(/&euro;/gi, "€")
       .replace(/\s+/g, " "),
   );
 }
@@ -95,6 +97,24 @@ function lmtModel(html: string): string | undefined {
   return text.match(/Modelis\s+([A-Z0-9][A-Z0-9._\/-]{4,})/i)?.[1];
 }
 
+function m79ConsumerPrice(html: string): number | undefined {
+  const text = plainText(html);
+
+  // M79 renders the consumer/gross price immediately before "Bez PVN" and then
+  // shows the lower net price. Anchor on that phrase so the net value can never
+  // become CENIQ's displayed offer price.
+  const grossBeforeVat = text.match(/(\d{1,5}(?:[.,]\d{1,2})?)\s*€\s*Bez\s+PVN\s+\d{1,5}(?:[.,]\d{1,2})?\s*€/i);
+  if (grossBeforeVat?.[1]) return numericPrice(grossBeforeVat[1]);
+
+  return undefined;
+}
+
+function m79Sku(url: string, title: string): string | undefined {
+  const urlMatch = url.match(/-(\d{6,14})(?:\?.*)?$/);
+  if (urlMatch?.[1]) return urlMatch[1];
+  return title.match(/\((\d{6,14})\)/)?.[1];
+}
+
 const blockedCatalogTerms = [
   /\b(ammunition|firearm|rifle|shotgun|handgun|switchblade|taser|pepper spray|mace)\b/i,
   /\b(vape|e-cigarette|nicotine|cigarette|cigar)\b/i,
@@ -117,12 +137,18 @@ export function parseProductPage(
   const offer = firstOffer(product);
 
   const title = String(product?.name ?? meta(html, "og:title") ?? h1(html) ?? "").trim();
-  const price = numericPrice(
+  const structuredPrice = numericPrice(
     offer?.price ??
       offer?.lowPrice ??
       meta(html, "product:price:amount") ??
       meta(html, "og:price:amount"),
-  ) ?? (store.slug === "lmt" ? lmtOneTimePrice(html) : undefined);
+  );
+  const fallbackPrice = store.slug === "lmt"
+    ? lmtOneTimePrice(html)
+    : store.slug === "m79"
+      ? m79ConsumerPrice(html)
+      : undefined;
+  const price = structuredPrice ?? fallbackPrice;
   const currency = String(
     offer?.priceCurrency ?? meta(html, "product:price:currency") ?? meta(html, "og:price:currency") ?? "EUR",
   ).toUpperCase();
@@ -138,7 +164,13 @@ export function parseProductPage(
 
   const brand = typeof product?.brand === "object" ? product.brand?.name : product?.brand;
   const gtin = product?.gtin13 ?? product?.gtin14 ?? product?.gtin12 ?? product?.gtin8 ?? product?.gtin;
-  const sku = product?.sku ? String(product.sku) : store.slug === "lmt" ? lmtModel(html) : undefined;
+  const sku = product?.sku
+    ? String(product.sku)
+    : store.slug === "lmt"
+      ? lmtModel(html)
+      : store.slug === "m79"
+        ? m79Sku(url, title)
+        : undefined;
 
   return {
     merchantSlug: store.slug,
