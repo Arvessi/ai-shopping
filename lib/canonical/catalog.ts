@@ -13,6 +13,7 @@ import {
   type NormalizedOfferCandidate,
   type ResolvedCandidate,
 } from './domain';
+import { canonicalizeMerchantProductTitle } from './title-normalization';
 
 const approvedDomains = new Set(LATVIA_ELECTRONICS_STORES.map((store) => store.domain));
 const OFFER_MAX_AGE_MS = Math.max(1, Number(process.env.OFFER_MAX_AGE_HOURS || 48)) * 60 * 60 * 1000;
@@ -45,7 +46,7 @@ async function locateVariant(candidate: ResolvedCandidate) {
   return null;
 }
 
-async function ingestOne(candidate: ResolvedCandidate) {
+async function ingestOne(candidate: ResolvedCandidate, observe = true) {
   if (!acceptsMerchant(candidate)) return { accepted: false, reason: 'merchant-domain-not-approved' };
 
   const known = await locateVariant(candidate);
@@ -63,6 +64,7 @@ async function ingestOne(candidate: ResolvedCandidate) {
         },
         update: {
           canonicalTitle: candidate.familyTitle,
+          normalizedTitle: candidate.normalizedTitle,
           brand: candidate.brand || undefined,
           model: candidate.model || undefined,
           category: candidate.category || undefined,
@@ -175,21 +177,115 @@ async function ingestOne(candidate: ResolvedCandidate) {
       expiresAt: new Date(now.getTime() + OFFER_MAX_AGE_MS),
     },
   });
-  await prisma.offerObservation.create({
-    data: {
-      offerId: offer.id, oneTimePrice: accepted ? candidate.price : null,
-      shippingPrice: accepted ? candidate.shippingPrice : null, totalPrice: accepted ? candidate.totalPrice : null,
-      priceKind: candidate.priceKind, availability: candidate.availability,
-    },
-  });
+  if (observe) {
+    await prisma.offerObservation.create({
+      data: {
+        offerId: offer.id, oneTimePrice: accepted ? candidate.price : null,
+        shippingPrice: accepted ? candidate.shippingPrice : null, totalPrice: accepted ? candidate.totalPrice : null,
+        priceKind: candidate.priceKind, availability: candidate.availability,
+      },
+    });
+  }
   return { accepted, familyId: family.id, variantId: variant.id, offerId: offer.id };
 }
 
-export async function ingestCandidates(candidates: NormalizedOfferCandidate[]) {
+export async function ingestCandidates(candidates: NormalizedOfferCandidate[], options: { observe?: boolean } = {}) {
   const resolved = applyVariantOutlierValidation(candidates.map(resolveCandidate));
   const results = [];
-  for (const candidate of resolved) results.push(await ingestOne(candidate));
+  for (const candidate of resolved) results.push(await ingestOne(candidate, options.observe !== false));
   return results;
+}
+
+export async function recanonicalizeExistingOffers(query: string) {
+  const normalized = normalizeText(query);
+  const first = normalized.split(' ').filter(Boolean)[0];
+  if (!first) return 0;
+  const freshAfter = new Date(Date.now() - OFFER_MAX_AGE_MS);
+
+  const families = await prisma.productFamily.findMany({
+    where: {
+      status: 'ACTIVE',
+      OR: [
+        { normalizedTitle: { contains: first, mode: 'insensitive' } },
+        { brand: { contains: first, mode: 'insensitive' } },
+        { model: { contains: first, mode: 'insensitive' } },
+      ],
+    },
+    include: {
+      variants: {
+        where: { status: 'ACTIVE' },
+        include: {
+          images: { orderBy: { confidence: 'desc' }, take: 1 },
+          offers: {
+            where: {
+              validationStatus: 'ACCEPTED',
+              priceKind: 'ONE_TIME',
+              oneTimePrice: { not: null },
+              totalPrice: { not: null },
+              lastSeenAt: { gte: freshAfter },
+              OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+            },
+            include: { merchant: true },
+          },
+        },
+      },
+    },
+    take: 50,
+  });
+
+  const candidates: NormalizedOfferCandidate[] = [];
+  for (const family of families) {
+    const identity = canonicalizeMerchantProductTitle(family.canonicalTitle, family.brand || undefined);
+    if (normalizeText(identity.title) === normalizeText(family.canonicalTitle) && identity.brand === (family.brand || undefined)) {
+      continue;
+    }
+
+    for (const variant of family.variants) {
+      const attrs = variant.attributes as VariantAttributes;
+      const variantImage = variant.images[0]?.url;
+      for (const offer of variant.offers) {
+        const merchantDomain = offer.merchant.domain || '';
+        if (!merchantDomain || offer.oneTimePrice == null) continue;
+        candidates.push({
+          source: offer.sourceType,
+          sourceKey: offer.sourceKey,
+          merchant: {
+            name: offer.merchant.name,
+            domain: merchantDomain,
+            slug: offer.merchant.slug,
+          },
+          title: identity.title,
+          brand: identity.brand,
+          model: family.model || undefined,
+          category: family.category || undefined,
+          url: offer.url,
+          image: (offer.imageUrl || variantImage)
+            ? {
+                url: offer.imageUrl || variantImage!,
+                source: 'canonical-repair',
+                provenance: 'variant',
+                confidence: 0.8,
+              }
+            : undefined,
+          attributes: attrs,
+          price: offer.oneTimePrice,
+          shippingPrice: offer.shippingPrice || undefined,
+          currency: offer.currency,
+          availability: offer.availability || undefined,
+          stockQty: offer.stockQty || undefined,
+          evidence: {
+            displayedPrice: `${offer.oneTimePrice} ${offer.currency}`,
+            sellerText: offer.merchant.name,
+            explicitOneTime: true,
+          },
+        });
+      }
+    }
+  }
+
+  if (!candidates.length) return 0;
+  await ingestCandidates(candidates, { observe: false });
+  return candidates.length;
 }
 
 type FamilyRow = Awaited<ReturnType<typeof loadFamilies>>[number];
@@ -230,7 +326,11 @@ function familyToResult(family: FamilyRow, query = '', preferredVariantId?: stri
     ...variant, attributes: variant.attributes as VariantAttributes, offerCount: variant.offers.length,
     bestPrice: variant.offers.length ? Math.min(...variant.offers.map((offer) => offer.totalPrice!)) : undefined,
   }));
-  const selected = selectable.find((variant) => variant.id === preferredVariantId) || selectVariantForQuery(selectable, query)!;
+  const offeredSelectable = selectable.filter((variant) => variant.offerCount > 0);
+  const selected =
+    offeredSelectable.find((variant) => variant.id === preferredVariantId) ||
+    selectVariantForQuery(offeredSelectable, query) ||
+    offeredSelectable[0];
 
   const views: OfferView[] = [];
   for (const variant of offeredVariants) {
