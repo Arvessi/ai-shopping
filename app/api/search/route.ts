@@ -7,15 +7,15 @@ import {
   recanonicalizeExistingOffers,
   searchCanonicalCatalog,
 } from '@/lib/canonical/catalog';
-import { queueEnrichment } from '@/lib/canonical/enrichment';
 import {
-  discoverShoppingLive,
+  discoverShoppingLiveMany,
   mapShoppingCandidates,
 } from '@/lib/canonical/dataforseo-client';
 import { discoverLatvianStoreCandidates } from '@/lib/canonical/store-discovery';
 import { shapeCanonicalResults } from '@/lib/canonical/result-shaping';
+import { expandDiscoveryQueries } from '@/lib/canonical/query-expansion';
 
-export const maxDuration = 30;
+export const maxDuration = 45;
 
 function coverage(results: Awaited<ReturnType<typeof searchCanonicalCatalog>>) {
   return Math.max(0, ...results.map((product) => product.storesCount || 0));
@@ -71,17 +71,19 @@ export async function POST(request: Request) {
     let source = recanonicalizedOfferCount > 0 ? 'canonical-repaired' : 'canonical-catalog';
     let liveCandidateCount = 0;
     let lvStoreCandidateCount = 0;
+    const discoveryQueries = expandDiscoveryQueries(q);
 
-    if (!results.length || coverage(results) < 5) {
+    // Expand thin searches immediately. DataForSEO receives the variant/model queries
+    // in one batched live request, so the user does not need to type e.g. "256GB"
+    // manually just to make that storage option discoverable.
+    if (!results.length || coverage(results) < 5 || Math.max(0, ...results.map((product) => product.catalogVariants?.length || 0)) < 2) {
       const [liveResult, storeResult] = await Promise.allSettled([
-        discoverShoppingLive(q).then(mapShoppingCandidates),
+        discoverShoppingLiveMany(discoveryQueries).then(mapShoppingCandidates),
         discoverLatvianStoreCandidates(q),
       ]);
 
-      const liveCandidates =
-        liveResult.status === 'fulfilled' ? liveResult.value : [];
-      const storeCandidates =
-        storeResult.status === 'fulfilled' ? storeResult.value : [];
+      const liveCandidates = liveResult.status === 'fulfilled' ? liveResult.value : [];
+      const storeCandidates = storeResult.status === 'fulfilled' ? storeResult.value : [];
 
       liveCandidateCount = liveCandidates.length;
       lvStoreCandidateCount = storeCandidates.length;
@@ -101,9 +103,7 @@ export async function POST(request: Request) {
         results = shapeCanonicalResults(rawResults, q);
 
         if (results.length) {
-          source = storeCandidates.length
-            ? 'canonical-lv-stores'
-            : 'canonical-live';
+          source = storeCandidates.length ? 'canonical-lv-stores' : 'canonical-live';
         }
       }
     }
@@ -113,12 +113,11 @@ export async function POST(request: Request) {
       0,
       ...results.map((product) => product.catalogVariants?.filter((variant) => variant.offerCount > 0).length || 0),
     );
-    const needsEnrichment =
-      !results.length || bestCoverage < 3 || bestVariants < 2;
-    const job = needsEnrichment
-      ? await queueEnrichment(q).catch(() => null)
-      : null;
 
+    // Do not kick off the old async merchant job from the main search anymore.
+    // It used to overwrite a good result set seconds later with a different subset,
+    // which is why repeated searches appeared random. Live discovery above is the
+    // authoritative first-render path now.
     return NextResponse.json({
       results,
       source,
@@ -126,6 +125,7 @@ export async function POST(request: Request) {
       liveCandidateCount,
       lvStoreCandidateCount,
       recanonicalizedOfferCount,
+      discoveryQueries,
       diagnostics: {
         rawProductGroups: rawResults.length,
         productGroups: results.length,
@@ -142,9 +142,9 @@ export async function POST(request: Request) {
         })),
       },
       enrichment: {
-        enabled: Boolean(job),
+        enabled: false,
         query: q,
-        jobId: job?.id,
+        jobId: null,
       },
       message: !results.length
         ? 'CENIQ neatrada derigus veikalu piedavajumus siem meklesanas vardiem.'
@@ -154,8 +154,7 @@ export async function POST(request: Request) {
     console.error('CENIQ canonical search:', error);
     return NextResponse.json(
       {
-        error:
-          error instanceof Error ? error.message : 'Meklesana neizdevas.',
+        error: error instanceof Error ? error.message : 'Meklesana neizdevas.',
       },
       { status: 502 },
     );
@@ -164,7 +163,7 @@ export async function POST(request: Request) {
 
 export async function GET() {
   return NextResponse.json(
-    { error: 'Search polling is not used; poll the bounded enrichment job.' },
+    { error: 'Search polling is not used.' },
     { status: 410 },
   );
 }
