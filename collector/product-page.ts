@@ -97,6 +97,17 @@ function lmtModel(html: string): string | undefined {
   return text.match(/Modelis\s+([A-Z0-9][A-Z0-9._\/-]{4,})/i)?.[1];
 }
 
+function biteOneTimePrice(html: string): number | undefined {
+  const text = plainText(html);
+  const match = text.match(/Pērkot\s+uzreiz[\s\S]{0,160}?(\d{1,5}(?:[.,]\d{1,2})?)\s*€/i);
+  return numericPrice(match?.[1]);
+}
+
+function biteSku(html: string): string | undefined {
+  const text = plainText(html);
+  return text.match(/SKU\s+kods\s*:\s*([A-Z0-9._\/-]{4,})/i)?.[1];
+}
+
 function m79ConsumerPrice(html: string): number | undefined {
   const text = plainText(html);
 
@@ -136,7 +147,14 @@ export function parseProductPage(
   const product = productNode(html);
   const offer = firstOffer(product);
 
-  const title = String(product?.name ?? meta(html, "og:title") ?? h1(html) ?? "").trim();
+  const pageH1 = h1(html);
+  const title = String(
+    product?.name ??
+      (store.slug === "bite" ? pageH1 : undefined) ??
+      meta(html, "og:title") ??
+      pageH1 ??
+      "",
+  ).trim();
   const structuredPrice = numericPrice(
     offer?.price ??
       offer?.lowPrice ??
@@ -145,9 +163,11 @@ export function parseProductPage(
   );
   const fallbackPrice = store.slug === "lmt"
     ? lmtOneTimePrice(html)
-    : store.slug === "m79"
-      ? m79ConsumerPrice(html)
-      : undefined;
+    : store.slug === "bite"
+      ? biteOneTimePrice(html)
+      : store.slug === "m79"
+        ? m79ConsumerPrice(html)
+        : undefined;
   const price = structuredPrice ?? fallbackPrice;
   const currency = String(
     offer?.priceCurrency ?? meta(html, "product:price:currency") ?? meta(html, "og:price:currency") ?? "EUR",
@@ -168,9 +188,11 @@ export function parseProductPage(
     ? String(product.sku)
     : store.slug === "lmt"
       ? lmtModel(html)
-      : store.slug === "m79"
-        ? m79Sku(url, title)
-        : undefined;
+      : store.slug === "bite"
+        ? biteSku(html)
+        : store.slug === "m79"
+          ? m79Sku(url, title)
+          : undefined;
 
   return {
     merchantSlug: store.slug,
