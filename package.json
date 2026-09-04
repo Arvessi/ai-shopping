@@ -10,6 +10,7 @@
     "test": "node --experimental-strip-types --test tests/*.test.ts",
     "typecheck": "tsc --noEmit",
     "collector:smoke": "node --experimental-strip-types scripts/collector-smoke.ts",
+    "collector:probe": "node --experimental-strip-types scripts/collector-probe.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
     "db:push": "prisma db push"
