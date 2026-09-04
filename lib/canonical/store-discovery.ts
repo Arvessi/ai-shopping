@@ -1,10 +1,11 @@
 import { LATVIA_ELECTRONICS_STORES } from '@/lib/store-registry';
-import { extractAttributes, normalizeText, type NormalizedOfferCandidate } from './domain';
+import { extractAttributes, normalizeText, type IdentifierCandidate, type NormalizedOfferCandidate } from './domain';
 import { canonicalizeMerchantProductTitle } from './title-normalization';
 
 const API_BASE = 'https://api.dataforseo.com/v3';
-const PAGE_TIMEOUT_MS = 2800;
-const MAX_PAGE_FETCHES = 12;
+const PAGE_TIMEOUT_MS = 3000;
+const MAX_PAGE_FETCHES = 24;
+const MAX_PAGES_PER_STORE = 2;
 
 type Json = Record<string, any>;
 
@@ -57,18 +58,19 @@ function number(value: unknown) {
 
 function itemPrice(item: Json) {
   if (typeof item.price === 'number') return number(item.price);
-  return (
-    number(item.price?.current) ||
-    number(item.price?.value) ||
-    number(item.current_price) ||
-    number(item.total_price) ||
-    number(item.base_price)
-  );
+  return number(item.price?.current) || number(item.price?.value) || number(item.current_price) || number(item.total_price) || number(item.base_price);
+}
+
+function queryTokens(query: string) {
+  return normalizeText(query)
+    .split(' ')
+    .filter((token) => token.length > 1 && !['cena', 'price', 'latvija', 'latvia'].includes(token));
 }
 
 function matchesQuery(text: string, query: string) {
   const haystack = normalizeText(text);
-  const tokens = normalizeText(query).split(' ').filter((token) => token.length > 1);
+  const tokens = queryTokens(query);
+  if (!tokens.length) return true;
   return tokens.every((token) => haystack.includes(token));
 }
 
@@ -99,9 +101,9 @@ function walk(value: unknown, query: string, output: FoundPage[]) {
     });
   }
 
-  Object.values(item).forEach((child) => {
+  for (const child of Object.values(item)) {
     if (child && typeof child === 'object') walk(child, query, output);
-  });
+  }
 }
 
 async function discoverPages(query: string) {
@@ -115,7 +117,7 @@ async function discoverPages(query: string) {
     keyword: `${query} (${group.map((store) => `site:${store.domain}`).join(' OR ')})`,
     device: 'desktop',
     os: 'windows',
-    depth: 50,
+    depth: 100,
   }));
 
   const response = await fetch(`${API_BASE}/serp/google/organic/live/advanced`, {
@@ -123,7 +125,7 @@ async function discoverPages(query: string) {
     headers: { Authorization: auth(), 'Content-Type': 'application/json' },
     body: JSON.stringify(tasks),
     cache: 'no-store',
-    signal: AbortSignal.timeout(10_000),
+    signal: AbortSignal.timeout(12_000),
   });
 
   const json = (await response.json().catch(() => ({}))) as Json;
@@ -139,7 +141,24 @@ async function discoverPages(query: string) {
     const existing = unique.get(page.url);
     if (!existing || (!existing.price && page.price) || (!existing.image && page.image)) unique.set(page.url, page);
   }
-  return Array.from(unique.values());
+
+  // Do not let the first merchant consume every fetch slot. Spread page checks across
+  // as many Latvian stores as possible so coverage grows instead of staying at 1 store.
+  const perStore = new Map<string, FoundPage[]>();
+  for (const page of unique.values()) {
+    const list = perStore.get(page.domain) || [];
+    if (list.length < MAX_PAGES_PER_STORE) list.push(page);
+    perStore.set(page.domain, list);
+  }
+
+  const balanced: FoundPage[] = [];
+  for (let round = 0; round < MAX_PAGES_PER_STORE; round += 1) {
+    for (const pages of perStore.values()) {
+      if (pages[round]) balanced.push(pages[round]);
+      if (balanced.length >= MAX_PAGE_FETCHES) return balanced;
+    }
+  }
+  return balanced;
 }
 
 function meta(html: string, names: string[]) {
@@ -172,16 +191,13 @@ function jsonLdProducts(html: string) {
         if (Array.isArray(value['@graph'])) queue.push(...value['@graph']);
       }
     } catch {
-      // Ignore malformed JSON-LD.
+      // Ignore malformed merchant JSON-LD.
     }
   }
   return products;
 }
 
 async function enrichPage(page: FoundPage, query: string): Promise<FoundPage> {
-  // If search discovery already gave us both price and image, there is nothing
-  // useful to add. Otherwise fetch the product page so images are available on
-  // the very first result render instead of waiting for background enrichment.
   if (page.price && page.price > 0 && page.image) return page;
 
   try {
@@ -197,7 +213,7 @@ async function enrichPage(page: FoundPage, query: string): Promise<FoundPage> {
     const fallbackImage = meta(html, ['og:image', 'twitter:image', 'image']);
     for (const product of jsonLdProducts(html)) {
       const title = String(product.name || page.title);
-      if (!matchesQuery(title, query)) continue;
+      if (!matchesQuery(`${title} ${page.snippet}`, query)) continue;
       const productImage = String(Array.isArray(product.image) ? product.image[0] : product.image || fallbackImage || page.image || '') || undefined;
       const offers = Array.isArray(product.offers) ? product.offers : product.offers ? [product.offers] : [];
       for (const offer of offers) {
@@ -211,10 +227,7 @@ async function enrichPage(page: FoundPage, query: string): Promise<FoundPage> {
           image: productImage,
         };
       }
-
-      if (page.price) {
-        return { ...page, title, image: productImage };
-      }
+      if (page.price) return { ...page, title, image: productImage };
     }
 
     const foundPrice = number(meta(html, ['product:price:amount', 'og:price:amount', 'price', 'priceAmount']));
@@ -229,11 +242,20 @@ async function enrichPage(page: FoundPage, query: string): Promise<FoundPage> {
   }
 }
 
+function meaningfulVariantAttributes(attributes: Record<string, string | undefined>) {
+  return Object.entries(attributes).some(([key, value]) => key !== 'condition' && Boolean(value));
+}
+
+function fallbackIdentifier(title: string, attributes: Record<string, string | undefined>): IdentifierCandidate | undefined {
+  if (meaningfulVariantAttributes(attributes)) return undefined;
+  const value = normalizeText(title);
+  if (value.length < 5 || value.split(' ').length < 2) return undefined;
+  return { type: 'MODEL_ALIAS', value, source: 'ceniq-store-title', confidence: 0.75 };
+}
+
 export async function discoverLatvianStoreCandidates(query: string): Promise<NormalizedOfferCandidate[]> {
   const pages = await discoverPages(query);
-  const enriched = await Promise.all(
-    pages.slice(0, MAX_PAGE_FETCHES).map((page) => enrichPage(page, query)),
-  );
+  const enriched = await Promise.all(pages.map((page) => enrichPage(page, query)));
 
   const candidates: NormalizedOfferCandidate[] = [];
   const seen = new Set<string>();
@@ -245,6 +267,9 @@ export async function discoverLatvianStoreCandidates(query: string): Promise<Nor
 
     const originalTitle = page.title;
     const identity = canonicalizeMerchantProductTitle(originalTitle);
+    const attributes = extractAttributes(`${originalTitle} ${page.snippet}`);
+    const identifier = fallbackIdentifier(identity.title, attributes);
+
     candidates.push({
       source: 'ceniq-lv-store-discovery',
       sourceKey: page.url,
@@ -254,7 +279,8 @@ export async function discoverLatvianStoreCandidates(query: string): Promise<Nor
       description: page.snippet || originalTitle,
       url: page.url,
       image: page.image ? { url: page.image, source: 'store-discovery', provenance: 'variant', confidence: 0.85 } : undefined,
-      attributes: extractAttributes(`${originalTitle} ${page.snippet}`),
+      identifiers: identifier ? [identifier] : undefined,
+      attributes,
       price: page.price,
       currency: page.currency || 'EUR',
       evidence: {
