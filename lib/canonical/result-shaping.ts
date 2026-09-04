@@ -86,7 +86,9 @@ export function shapeCanonicalResults(
       for (const offer of product.offers || []) {
         const attrs = sanitizeVariantAttributes(title, offer.variantData || {});
         const signature = variantSignature(attrs);
-        signatureToIds.set(signature, [...(signatureToIds.get(signature) || []), offer.variantId]);
+        if (offer.variantId) {
+          signatureToIds.set(signature, [...(signatureToIds.get(signature) || []), offer.variantId]);
+        }
         signatureToAttributes.set(signature, attrs);
         if (offer.image && !signatureToImage.has(signature)) signatureToImage.set(signature, offer.image);
         signatureToPrices.set(signature, [...(signatureToPrices.get(signature) || []), offer.totalPrice]);
@@ -95,9 +97,10 @@ export function shapeCanonicalResults(
 
     const representativeId = new Map<string, string>();
     for (const [signature, ids] of signatureToIds) {
+      if (!ids.length) continue;
       representativeId.set(
         signature,
-        ids.includes(preferredVariantId || '') ? preferredVariantId! : ids[0],
+        preferredVariantId && ids.includes(preferredVariantId) ? preferredVariantId : ids[0],
       );
     }
 
@@ -107,6 +110,7 @@ export function shapeCanonicalResults(
         const attrs = sanitizeVariantAttributes(title, offer.variantData || {});
         const signature = variantSignature(attrs);
         const mappedVariantId = representativeId.get(signature) || offer.variantId;
+        if (!mappedVariantId) continue;
         const merchant = normalizeText(String(offer.merchantDomain || offer.merchant || ''));
         const key = `${merchant}|${signature}|${normalizeText(String(offer.url || ''))}`;
         const shaped = {
@@ -121,17 +125,18 @@ export function shapeCanonicalResults(
     }
 
     const offers = Array.from(offersByKey.values()).sort((a, b) => a.totalPrice - b.totalPrice);
-    const catalogVariants = Array.from(signatureToAttributes.entries()).map(([signature, attributes]) => {
+    const catalogVariants = Array.from(signatureToAttributes.entries()).flatMap(([signature, attributes]) => {
+      const id = representativeId.get(signature);
+      if (!id) return [];
       const prices = signatureToPrices.get(signature) || [];
-      const id = representativeId.get(signature)!;
-      return {
+      return [{
         id,
         variantKey: `display:${signature}`,
         attributes,
         image: signatureToImage.get(signature),
         offerCount: new Set(offers.filter((offer) => offer.variantId === id).map((offer) => offer.merchantDomain || offer.merchant)).size,
         bestPrice: prices.length ? Math.min(...prices) : undefined,
-      };
+      }];
     }).filter((variant) => variant.offerCount > 0);
 
     if (!offers.length || !catalogVariants.length) continue;
