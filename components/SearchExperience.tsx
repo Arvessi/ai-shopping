@@ -33,7 +33,7 @@ const fallbackPopular = [
 ];
 
 const SEARCH_STATE_KEY =
-  'ceniq-search-state-v32';
+  'ceniq-search-state-v34';
 
 type SearchMode =
   | 'search'
@@ -497,7 +497,7 @@ export default function SearchExperience() {
             'approved-store-fallback'
           ? 'Apstiprinātie LV veikali'
           : source ===
-              'ceniq-cache-v32'
+              'ceniq-cache-v34'
             ? 'CENIQ kešatmiņa'
             : '';
 

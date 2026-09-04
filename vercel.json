@@ -1,6 +1,5 @@
 {
   "crons": [
-    { "path": "/api/cron/alerts", "schedule": "15 6 * * *" },
-    { "path": "/api/cron/catalog-crawl", "schedule": "45 3 * * *" }
+    { "path": "/api/cron/alerts", "schedule": "15 6 * * *" }
   ]
 }
