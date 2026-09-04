@@ -11,6 +11,9 @@ import type { ProductResult } from '@/lib/types';
 
 export const maxDuration = 10;
 
+const ACCESSORY = /\b(?:case|cover|screen\s*protector|protective|tempered\s*glass|glass|charger|adapter|cable|holder|maci[nņ]s|vaci[nņ]s|apvalks|aizsargstikls|stikls|vāciņš|maciņš)\b/i;
+const CONDITION = /\b(?:izpakota|izpakots|refurb(?:ished)?|lietota|lietots|used|demo)\b/i;
+
 const CATEGORY_ALIASES: Array<{ pattern: RegExp; needles: string[] }> = [
   { pattern: /\b(smartphone|phone|telefoni?|viedt[aā]lru[nņ])\b/i, needles: ['phone', 'smartphone', 'telef', 'mobile'] },
   { pattern: /\b(laptop|notebook|portat[iī]v)\b/i, needles: ['laptop', 'notebook', 'portat'] },
@@ -26,6 +29,12 @@ const CATEGORY_ALIASES: Array<{ pattern: RegExp; needles: string[] }> = [
   { pattern: /\b(toy|toys|rota[lļ]liet|b[eē]rniem)\b/i, needles: ['toy', 'rotaļ', 'bērn'] },
   { pattern: /\b(home|m[aā]jai|furniture|m[eē]beles)\b/i, needles: ['home', 'māj', 'furniture', 'mēbel'] },
 ];
+
+function productIntentCompatible(title: string, query: string) {
+  if (!ACCESSORY.test(query) && ACCESSORY.test(title)) return false;
+  if (!CONDITION.test(query) && CONDITION.test(title)) return false;
+  return true;
+}
 
 function coverage(results: ProductResult[]) {
   return Math.max(0, ...results.map((product) => product.storesCount || 0));
@@ -73,7 +82,7 @@ async function searchCatalogWithFallback(query: string) {
     ? await searchCanonicalCatalog(canonicalQuery)
     : [];
   const categories = primary.length >= 8 ? [] : await categoryFallback(query);
-  return mergeProducts(primary, canonical, categories);
+  return mergeProducts(primary, canonical, categories).filter((product) => productIntentCompatible(product.title, query));
 }
 
 async function prioritizeV2(results: ProductResult[], query: string) {
@@ -124,11 +133,10 @@ export async function POST(request: Request) {
     const user = await getSessionUser();
     prisma.searchLog.create({ data: { query: q.slice(0, 700), mode, userId: user?.id } }).catch(() => undefined);
 
-    // Interactive search is strictly catalogue/DB-only. No Tavily, Brave or
-    // DataForSEO call can be triggered from this route.
+    // Interactive search is strictly catalogue/DB-only. No Tavily, Brave or DataForSEO.
     const rawResults = await searchCatalogWithFallback(q);
     const reconciled = reconcileStrongFamilies(rawResults);
-    const shaped = shapeCanonicalResults(reconciled, q);
+    const shaped = shapeCanonicalResults(reconciled, q).filter((product) => productIntentCompatible(product.title, q));
     const prioritized = await prioritizeV2(shaped, q);
     const results = prioritized.results;
     const bestCoverage = coverage(results);
