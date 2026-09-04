@@ -23,7 +23,12 @@ function sourceKey(offer: CollectedOffer): string {
 export function collectedOfferToCandidate(offer: CollectedOffer): NormalizedOfferCandidate {
   const identifiers: NonNullable<NormalizedOfferCandidate["identifiers"]> = [];
   if (offer.gtin) identifiers.push({ type: "GTIN", value: offer.gtin, source: "collector-v2", confidence: 0.98 });
-  if (offer.sku) identifiers.push({ type: "SKU_ALIAS", value: offer.sku, source: offer.merchantSlug, confidence: 0.85 });
+
+  // Merchant SKU is useful for stable local offer identity, but must not be used
+  // as a cross-store identifier because different merchants can reuse the same SKU.
+  // Keeping it as a variant attribute raises identity confidence without merging
+  // unrelated products across merchants.
+  const attributes = offer.sku ? { merchantSku: offer.sku } : undefined;
 
   return {
     source: "collector-v2",
@@ -46,6 +51,7 @@ export function collectedOfferToCandidate(offer: CollectedOffer): NormalizedOffe
         }
       : undefined,
     identifiers,
+    attributes,
     price: offer.price,
     currency: offer.currency || "EUR",
     availability: offer.availability,
