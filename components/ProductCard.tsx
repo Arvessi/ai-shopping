@@ -9,10 +9,7 @@ const AXIS_LABELS: Partial<Record<keyof VariantAttributes, string>> = {
   storage:'Atmiņa', color:'Krāsa', ram:'RAM', connectivity:'Savienojums', size:'Izmērs', cpu:'Procesors', gpu:'Grafika', resolution:'Izšķirtspēja', panelType:'Panelis', refreshRate:'Frekvence', kit:'Komplekts', condition:'Stāvoklis',
 };
 
-function money(value:number,currency='EUR') {
-  try { return new Intl.NumberFormat('lv-LV',{style:'currency',currency}).format(value); }
-  catch { return `${value.toFixed(2)} ${currency}`; }
-}
+function money(value:number,currency='EUR') { try { return new Intl.NumberFormat('lv-LV',{style:'currency',currency}).format(value); } catch { return `${value.toFixed(2)} ${currency}`; } }
 function merchantKey(offer:OfferView){ return String(offer.merchantDomain||offer.merchant||'').toLowerCase().replace(/^www\./,''); }
 function sameSelection(attributes:VariantAttributes,selected:Partial<VariantAttributes>){ return Object.entries(selected).every(([key,value])=>!value||attributes[key as keyof VariantAttributes]===value); }
 function variantOptions(variants:CatalogVariantView[]){
@@ -25,7 +22,6 @@ function variantOptions(variants:CatalogVariantView[]){
 }
 function queryChoice(query:string,values:string[]){ const normalized=query.toLowerCase().replace(/\s+/g,''); return values.find(value=>normalized.includes(value.toLowerCase().replace(/\s+/g,''))); }
 function availability(offer:OfferView){ return offer.deliveryMessage||'Pārbaudīt veikalā'; }
-function selectedScore(offers:OfferView[]){ if(new Set(offers.map(merchantKey)).size<2) return 0; return Math.max(0,...offers.map(offer=>Number(offer.dealScore||0))); }
 function chooseBestVariant(variants:CatalogVariantView[],current:Partial<VariantAttributes>,axis:keyof VariantAttributes,value:string){
   const candidates=variants.filter(v=>v.offerCount>0&&v.attributes?.[axis]===value); if(!candidates.length) return null;
   const otherAxes=Object.entries(current).filter(([key,selected])=>key!==axis&&Boolean(selected));
@@ -57,7 +53,7 @@ export default function ProductCard({product,query=''}:{product:ProductResult;qu
   const selectedOffers=useMemo(()=>[...(selectedCatalogVariant?product.offers.filter(o=>o.variantId===selectedCatalogVariant.id):product.offers.filter(o=>sameSelection(o.variantData||{},selected)))].sort((a,b)=>a.totalPrice-b.totalPrice),[product.offers,selectedCatalogVariant,selected]);
   const stores=new Set(selectedOffers.map(merchantKey)).size;
   const allStores=new Set(product.offers.map(merchantKey)).size;
-  const score=selectedScore(selectedOffers); const selectedBest=selectedOffers[0];
+  const selectedBest=selectedOffers[0];
   const currentImage=selectedCatalogVariant?.image||selectedOffers.find(o=>Boolean(o.image))?.image||product.familyImage||product.image||'';
   const productHref=`/product/${encodeURIComponent(product.id)}${selectedCatalogVariant?.id?`?variantId=${encodeURIComponent(selectedCatalogVariant.id)}`:''}`;
   const visibleOffers=showAll?selectedOffers:selectedOffers.slice(0,5);
@@ -66,38 +62,29 @@ export default function ProductCard({product,query=''}:{product:ProductResult;qu
   function offerHref(offer:OfferView){ if(offer.id) return `/api/out?offerId=${encodeURIComponent(offer.id)}`; return offer.url||productHref; }
   async function save(e:MouseEvent){ e.preventDefault(); e.stopPropagation(); if(!product.id||product.id.startsWith('family:')){ window.location.href='/login'; return; } setSaving(true); const response=await fetch('/api/wishlist',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({familyId:product.id,variantId:selectedCatalogVariant?.id})}); if(response.status===401) window.location.href='/login'; else if(response.ok) setSaved(true); setSaving(false); }
 
-  return <article className="market-sheet">
-    <div className="market-identity">
-      <div className="market-image">
-        {currentImage?<img src={currentImage} alt={product.title} loading="lazy"/>:<div className="market-image-fallback"><b>C</b><span>nav attēla</span></div>}
+  return <article className="v7-product">
+    <div className="v7-product-main">
+      <div className="v7-media">{currentImage?<img src={currentImage} alt={product.title} loading="lazy"/>:<div className="v7-fallback"><b>C</b><span>nav attēla</span></div>}</div>
+      <div className="v7-copy">
+        <div className="v7-meta"><span className="v7-brand">{product.brand||'Produkts'}</span><span className="v7-stores">{allStores} {allStores===1?'veikals':'veikali'} katalogā</span></div>
+        <Link href={productHref} className="v7-title">{product.title}</Link>
+        {AXIS_ORDER.some(axis=>Boolean(axes[axis]?.length))&&<div className="v7-variants">{AXIS_ORDER.map(axis=>{ const options=axes[axis]; if(!options||options.length<2) return null; return <div className="v7-axis" key={axis}><span>{AXIS_LABELS[axis]}</span><div>{options.map(option=><button type="button" key={option} className={selected[axis]===option?'active':''} onClick={()=>chooseVariant(axis,option)}>{option}</button>)}</div></div>; })}</div>}
       </div>
-      <div className="market-copy">
-        <div className="market-overline"><span>{product.brand||'Produkts'}</span><i>{allStores} {allStores===1?'veikals':'veikali'} katalogā</i></div>
-        <Link href={productHref} className="market-title">{product.title}</Link>
-        {AXIS_ORDER.some(axis=>Boolean(axes[axis]?.length))&&<div className="market-variants">
-          {AXIS_ORDER.map(axis=>{ const options=axes[axis]; if(!options||options.length<2) return null; return <div className="market-axis" key={axis}><span>{AXIS_LABELS[axis]}</span><div>{options.map(option=><button type="button" key={option} className={selected[axis]===option?'active':''} onClick={()=>chooseVariant(axis,option)}>{option}</button>)}</div></div>; })}
-        </div>}
-      </div>
-      <aside className="market-price-block">
-        <span>Labākā cena</span>
-        <strong>{selectedBest?money(selectedBest.totalPrice,selectedBest.currency):'—'}</strong>
-        <small>{stores} {stores===1?'veikals':'veikali'} šim variantam{score>0?` · CENIQ ${score}/100`:''}</small>
-        <div className="market-quick-actions"><Link href={productHref}>Pilna analīze →</Link><button type="button" onClick={save} disabled={saving}>{saved?'♥':'♡'}</button></div>
+      <aside className="v7-side">
+        <div><div className="v7-price-label">Labākā cena</div><div className="v7-price">{selectedBest?money(selectedBest.totalPrice,selectedBest.currency):'—'}</div><div className="v7-price-note">{stores} {stores===1?'veikals':'veikali'} šim variantam</div></div>
+        <div className="v7-side-actions"><Link href={productHref} className="v7-analysis">Pilna analīze</Link><button className="v7-save" type="button" onClick={save} disabled={saving}>{saved?'♥ Saglabāts':'♡ Saglabāt'}</button></div>
       </aside>
     </div>
 
-    <div className="market-offers-section">
-      <div className="market-offers-title"><b>Cenu tirgus</b><span>{selectedOffers.length} {selectedOffers.length===1?'piedāvājums':'piedāvājumi'}</span></div>
-      {visibleOffers.length?<div className="market-offer-table">
-        <div className="market-offer-head"><span>Veikals</span><span>Pieejamība</span><span>Cena</span><span></span></div>
-        {visibleOffers.map((offer,index)=><div className="market-offer-row" key={offer.id||`${merchantKey(offer)}-${offer.totalPrice}-${index}`}>
-          <div className="market-merchant"><b>{offer.merchant}</b><small>{offer.merchantDomain||''}</small></div>
-          <div className="market-stock">{availability(offer)}</div>
-          <div className="market-offer-price"><b>{money(offer.totalPrice,offer.currency)}</b>{offer.shippingKnown&&offer.shipping>0?<small>+ {money(offer.shipping,offer.currency)} piegāde</small>:null}</div>
-          <a href={offerHref(offer)} target="_blank" rel="nofollow sponsored noopener">Atvērt ↗</a>
-        </div>)}
-      </div>:<div className="market-empty">Šim variantam vēl nav svaigu piedāvājumu.</div>}
-      {selectedOffers.length>5&&<button type="button" className="market-more" onClick={()=>setShowAll(v=>!v)}>{showAll?'Rādīt mazāk':`Rādīt vēl ${selectedOffers.length-5}`}</button>}
+    <div className="v7-market">
+      <div className="v7-market-title"><b>Veikalu piedāvājumi</b><span>{selectedOffers.length} {selectedOffers.length===1?'piedāvājums':'piedāvājumi'}</span></div>
+      {visibleOffers.length?visibleOffers.map((offer,index)=><div className="v7-offer" key={offer.id||`${merchantKey(offer)}-${offer.totalPrice}-${index}`}>
+        <div className="v7-offer-store"><b>{offer.merchant}</b><small>{offer.merchantDomain||''}</small></div>
+        <div className="v7-stock">{availability(offer)}</div>
+        <div className="v7-offer-price"><b>{money(offer.totalPrice,offer.currency)}</b>{offer.shippingKnown&&offer.shipping>0?<small>+ {money(offer.shipping,offer.currency)} piegāde</small>:null}</div>
+        <a href={offerHref(offer)} target="_blank" rel="nofollow sponsored noopener">Atvērt ↗</a>
+      </div>):<div className="v7-empty">Šim variantam vēl nav svaigu piedāvājumu.</div>}
+      {selectedOffers.length>5&&<button type="button" className="v7-more" onClick={()=>setShowAll(v=>!v)}>{showAll?'Rādīt mazāk':`Rādīt vēl ${selectedOffers.length-5}`}</button>}
     </div>
   </article>;
 }
