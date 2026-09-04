@@ -1,12 +1,36 @@
 import type { ProductResult, VariantAttributes } from '@/lib/types';
-import { normalizeText } from './domain';
+import { normalizeText, scoreExactVariant } from './domain';
 import { canonicalizeMerchantProductTitle } from './title-normalization';
 
 const PHONE_ALLOWED_AXES = new Set(['storage', 'ram', 'color', 'connectivity', 'condition']);
 const IPHONE_ALLOWED_AXES = new Set(['storage', 'color', 'connectivity', 'condition']);
 
-function isSpecificPhoneModel(value: string) {
-  return /\biphone\s+\d{1,2}\b/i.test(value) || /\bgalaxy\s+[a-z]\d{1,3}\b/i.test(value);
+type PhoneIntent = {
+  kind: 'iphone' | 'galaxy';
+  generation: string;
+  modifier: string;
+};
+
+function phoneIntent(value: string): PhoneIntent | null {
+  const iphone = value.match(/\b(?:Apple\s+)?iPhone\s+(\d{1,2})(?:\s*(e)\b|\s+(Pro\s+Max|Pro|Plus|Air|Mini|SE)\b)?/i);
+  if (iphone) {
+    return {
+      kind: 'iphone',
+      generation: iphone[1],
+      modifier: iphone[2] ? 'e' : normalizeText(iphone[3] || ''),
+    };
+  }
+
+  const galaxy = value.match(/\b(?:Samsung\s+)?Galaxy\s+([A-Z]\d{1,3})(?:\s+(Ultra|Plus|FE))?\b/i);
+  if (galaxy) {
+    return {
+      kind: 'galaxy',
+      generation: galaxy[1].toUpperCase(),
+      modifier: normalizeText(galaxy[2] || ''),
+    };
+  }
+
+  return null;
 }
 
 function canonicalTitle(value: string) {
@@ -39,9 +63,17 @@ function variantSignature(attributes: VariantAttributes) {
     .join('|') || 'default';
 }
 
-function exactIntentMatches(productTitle: string, query: string) {
-  if (!isSpecificPhoneModel(query)) return true;
-  return normalizeText(canonicalTitle(productTitle)) === normalizeText(canonicalTitle(query));
+function intentMatches(productTitle: string, query: string) {
+  const wanted = phoneIntent(query);
+  if (!wanted) return true;
+
+  const candidate = phoneIntent(productTitle);
+  if (!candidate || candidate.kind !== wanted.kind || candidate.generation !== wanted.generation) return false;
+
+  // A plain generation query is a lineup browse: base + Pro/Plus/Ultra/e/etc.
+  // Once a modifier is named, keep the search exact to that model.
+  if (!wanted.modifier) return true;
+  return candidate.modifier === wanted.modifier;
 }
 
 export function shapeCanonicalResults(
@@ -49,7 +81,7 @@ export function shapeCanonicalResults(
   query: string,
   preferredVariantId?: string,
 ): ProductResult[] {
-  const filtered = input.filter((product) => exactIntentMatches(product.title, query));
+  const filtered = input.filter((product) => intentMatches(product.title, query));
   const groups = new Map<string, ProductResult[]>();
 
   for (const product of filtered) {
@@ -104,6 +136,7 @@ export function shapeCanonicalResults(
       );
     }
 
+    // One merchant once per exact display variant. Keep its cheapest fresh offer.
     const offersByKey = new Map<string, any>();
     for (const product of products) {
       for (const offer of product.offers || []) {
@@ -112,7 +145,7 @@ export function shapeCanonicalResults(
         const mappedVariantId = representativeId.get(signature) || offer.variantId;
         if (!mappedVariantId) continue;
         const merchant = normalizeText(String(offer.merchantDomain || offer.merchant || ''));
-        const key = `${merchant}|${signature}|${normalizeText(String(offer.url || ''))}`;
+        const key = `${merchant}|${signature}`;
         const shaped = {
           ...offer,
           variantId: mappedVariantId,
@@ -124,7 +157,27 @@ export function shapeCanonicalResults(
       }
     }
 
-    const offers = Array.from(offersByKey.values()).sort((a, b) => a.totalPrice - b.totalPrice);
+    let offers = Array.from(offersByKey.values()).sort((a, b) => a.totalPrice - b.totalPrice);
+
+    // Re-score after display variants have been merged. Previously the score was
+    // calculated before the merge, so some merchants ended up with no visible score.
+    const rescored: any[] = [];
+    for (const [, variantId] of representativeId) {
+      const variantOffers = offers.filter((offer) => offer.variantId === variantId);
+      if (!variantOffers.length) continue;
+      const scored = scoreExactVariant(
+        variantOffers.map((offer) => ({
+          offer,
+          merchantKey: String(offer.merchantDomain || offer.merchant || ''),
+          totalPrice: Number(offer.totalPrice),
+          available: !/out.of.stock/i.test(String(offer.deliveryMessage || '')),
+          fresh: true,
+        })),
+      );
+      rescored.push(...scored.map((item) => ({ ...item.offer, dealScore: item.score })));
+    }
+    if (rescored.length) offers = rescored.sort((a, b) => a.totalPrice - b.totalPrice);
+
     const catalogVariants = Array.from(signatureToAttributes.entries()).flatMap(([signature, attributes]) => {
       const id = representativeId.get(signature);
       if (!id) return [];
@@ -172,9 +225,10 @@ export function shapeCanonicalResults(
     });
   }
 
+  const requested = canonicalTitle(query);
   return output.sort((a, b) => {
-    const exactA = normalizeText(a.title) === normalizeText(canonicalTitle(query)) ? 1 : 0;
-    const exactB = normalizeText(b.title) === normalizeText(canonicalTitle(query)) ? 1 : 0;
+    const exactA = normalizeText(a.title) === normalizeText(requested) ? 1 : 0;
+    const exactB = normalizeText(b.title) === normalizeText(requested) ? 1 : 0;
     return exactB - exactA || (b.storesCount || 0) - (a.storesCount || 0) || a.bestPrice - b.bestPrice;
   });
 }
