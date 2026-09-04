@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { ingestCandidates } from "../lib/canonical/catalog.ts";
 import type { NormalizedOfferCandidate } from "../lib/canonical/domain.ts";
 import type { CollectedOffer } from "./types.ts";
 
@@ -60,6 +59,7 @@ export function collectedOfferToCandidate(offer: CollectedOffer): NormalizedOffe
 
 export async function persistCollectedOffers(offers: CollectedOffer[]) {
   if (!offers.length) return { examined: 0, accepted: 0, rejected: 0, results: [] };
+  const { ingestCandidates } = await import("../lib/canonical/catalog.ts");
   const candidates = offers.map(collectedOfferToCandidate);
   const results = await ingestCandidates(candidates);
   const accepted = results.filter((result) => result.accepted).length;
