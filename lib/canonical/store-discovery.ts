@@ -64,7 +64,11 @@ function itemPrice(item: Json) {
 function queryTokens(query: string) {
   return normalizeText(query)
     .split(' ')
-    .filter((token) => token.length > 1 && !['cena', 'price', 'latvija', 'latvia'].includes(token));
+    .filter((token) => token.length > 1)
+    .filter((token) => !['cena', 'price', 'latvija', 'latvia', 'telefons', 'phone', 'laptop', 'notebook', 'tv', 'monitor'].includes(token))
+    .filter((token) => !/^(?:64|128|256|512|1024|2048)gb$/.test(token))
+    .filter((token) => !/^\d+(?:\.\d+)?tb$/.test(token))
+    .filter((token) => !/^\d{1,3}$/.test(token));
 }
 
 function matchesQuery(text: string, query: string) {
@@ -106,24 +110,18 @@ function walk(value: unknown, query: string, output: FoundPage[]) {
   }
 }
 
-async function discoverPages(query: string) {
-  const stores = LATVIA_ELECTRONICS_STORES.filter((store) => store.enabled !== false);
-  const groups: typeof stores[] = [];
-  for (let i = 0; i < stores.length; i += 13) groups.push(stores.slice(i, i + 13));
-
-  const tasks = groups.slice(0, 2).map((group) => ({
-    location_name: process.env.DATAFORSEO_LOCATION_NAME || 'Latvia',
-    language_code: process.env.DATAFORSEO_LANGUAGE_CODE || 'en',
-    keyword: `${query} (${group.map((store) => `site:${store.domain}`).join(' OR ')})`,
-    device: 'desktop',
-    os: 'windows',
-    depth: 100,
-  }));
-
+async function liveStoreSearch(keyword: string) {
   const response = await fetch(`${API_BASE}/serp/google/organic/live/advanced`, {
     method: 'POST',
     headers: { Authorization: auth(), 'Content-Type': 'application/json' },
-    body: JSON.stringify(tasks),
+    body: JSON.stringify([{
+      location_name: process.env.DATAFORSEO_LOCATION_NAME || 'Latvia',
+      language_code: process.env.DATAFORSEO_LANGUAGE_CODE || 'en',
+      keyword,
+      device: 'desktop',
+      os: 'windows',
+      depth: 100,
+    }]),
     cache: 'no-store',
     signal: AbortSignal.timeout(12_000),
   });
@@ -132,9 +130,36 @@ async function discoverPages(query: string) {
   if (!response.ok || Number(json.status_code || 0) >= 40000) {
     throw new Error(json.status_message || `Store discovery failed (${response.status}).`);
   }
+  return json;
+}
 
+async function discoverPages(query: string) {
+  const stores = LATVIA_ELECTRONICS_STORES.filter((store) => store.enabled !== false);
+  const groups: typeof stores[] = [];
+  for (let i = 0; i < stores.length; i += 13) groups.push(stores.slice(i, i + 13));
+
+  const keywords = groups.slice(0, 2).map(
+    (group) => `${query} (${group.map((store) => `site:${store.domain}`).join(' OR ')})`,
+  );
+
+  // Live SERP only accepts one task per request. Run the two Latvian-store groups
+  // as separate calls and merge them; the old multi-task payload could fail entirely.
+  const settled = await Promise.allSettled(keywords.map((keyword) => liveStoreSearch(keyword)));
   const found: FoundPage[] = [];
-  walk(json.tasks || [], query, found);
+  let successfulCalls = 0;
+
+  for (const result of settled) {
+    if (result.status === 'rejected') continue;
+    successfulCalls += 1;
+    walk(result.value.tasks || [], query, found);
+  }
+
+  if (!successfulCalls && settled.length) {
+    const errors = settled
+      .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+      .map((result) => result.reason instanceof Error ? result.reason.message : String(result.reason));
+    throw new Error(`Store discovery failed: ${errors.join(' | ')}`);
+  }
 
   const unique = new Map<string, FoundPage>();
   for (const page of found) {
@@ -142,8 +167,6 @@ async function discoverPages(query: string) {
     if (!existing || (!existing.price && page.price) || (!existing.image && page.image)) unique.set(page.url, page);
   }
 
-  // Do not let the first merchant consume every fetch slot. Spread page checks across
-  // as many Latvian stores as possible so coverage grows instead of staying at 1 store.
   const perStore = new Map<string, FoundPage[]>();
   for (const page of unique.values()) {
     const list = perStore.get(page.domain) || [];
