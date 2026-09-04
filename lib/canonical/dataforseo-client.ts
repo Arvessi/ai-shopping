@@ -1,4 +1,4 @@
-import { extractAttributes, providerTaskState, type IdentifierCandidate, type NormalizedOfferCandidate } from './domain.ts';
+import { extractAttributes, normalizeText, providerTaskState, type IdentifierCandidate, type NormalizedOfferCandidate } from './domain.ts';
 import { canonicalizeMerchantProductTitle } from './title-normalization';
 
 const API_BASE = 'https://api.dataforseo.com/v3';
@@ -49,9 +49,7 @@ export function shoppingTasksReadyIds(json: Json) {
   const ids = new Set<string>();
   for (const task of json.tasks || []) {
     if (!Array.isArray(task?.result)) continue;
-    for (const row of task.result) {
-      if (row?.id) ids.add(String(row.id));
-    }
+    for (const row of task.result) if (row?.id) ids.add(String(row.id));
   }
   return ids;
 }
@@ -73,7 +71,7 @@ export async function discoverShoppingLive(keyword: string) {
 
 export async function discoverShoppingLiveMany(keywords: string[]) {
   const clean = Array.from(new Set(keywords.map((keyword) => keyword.trim()).filter(Boolean))).slice(0, 10);
-  return request('/serp/google/organic/live/advanced', {
+  const json = await request('/serp/google/organic/live/advanced', {
     method: 'POST',
     body: JSON.stringify(clean.map((keyword) => ({
       ...taskPayload(keyword)[0],
@@ -82,6 +80,11 @@ export async function discoverShoppingLiveMany(keywords: string[]) {
       search_param: '&udm=28',
     }))),
   });
+
+  // Some DataForSEO responses do not echo task.data.keyword consistently. Preserve
+  // the exact query order so storage/RAM/model expansion can still be attributed.
+  json.__ceniqKeywords = clean;
+  return json;
 }
 
 type ShoppingIdentity = { productId?: string; gid?: string; dataDocId?: string };
@@ -109,12 +112,16 @@ export const getSellersTask = (taskId: string) => request(`/merchant/google/sell
 export const getProductInfoTask = (taskId: string) => request(`/merchant/google/product_info/task_get/advanced/${encodeURIComponent(taskId)}`);
 
 function domain(value: unknown) {
-  try { return new URL(String(value)).hostname.toLowerCase().replace(/^www\./, ''); } catch { return String(value || '').toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0]; }
+  try {
+    return new URL(String(value)).hostname.toLowerCase().replace(/^www\./, '');
+  } catch {
+    return String(value || '').toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+  }
 }
 
 function price(item: Json) {
   if (typeof item.price === 'number') return item.price;
-  for (const value of [item.price?.current, item.price?.value, item.current_price, item.price_from]) {
+  for (const value of [item.price?.current, item.price?.value, item.current_price, item.price_from, item.total_price, item.base_price]) {
     const number = Number(value);
     if (Number.isFinite(number) && number > 0) return number;
   }
@@ -124,28 +131,47 @@ function price(item: Json) {
 function identifiers(item: Json): IdentifierCandidate[] {
   const output: IdentifierCandidate[] = [];
   for (const [type, value] of [['GTIN', item.gtin], ['EAN', item.ean], ['UPC', item.upc], ['MPN', item.mpn], ['SKU_ALIAS', item.product_id || item.gid || item.data_docid]] as const) {
-    if (value != null && String(value).trim()) output.push({ type, value: String(value), source: 'dataforseo', confidence: type === 'SKU_ALIAS' ? 0.7 : 0.95 });
+    if (value != null && String(value).trim()) {
+      output.push({ type, value: String(value), source: 'dataforseo', confidence: type === 'SKU_ALIAS' ? 0.7 : 0.95 });
+    }
   }
   return output;
 }
 
 function walkItems(value: unknown, output: RawShoppingItem[], keyword?: string) {
-  if (Array.isArray(value)) { value.forEach((child) => walkItems(child, output, keyword)); return; }
+  if (Array.isArray(value)) {
+    value.forEach((child) => walkItems(child, output, keyword));
+    return;
+  }
   if (!value || typeof value !== 'object') return;
   const item = value as Json;
   if (item.title && Number.isFinite(price(item)) && (item.seller_name || item.seller || item.domain || item.url || item.shopping_url)) {
     output.push({ item, keyword });
   }
-  for (const child of Object.values(item)) if (child && typeof child === 'object') walkItems(child, output, keyword);
+  for (const child of Object.values(item)) {
+    if (child && typeof child === 'object') walkItems(child, output, keyword);
+  }
 }
 
-function taskKeyword(task: Json) {
-  return String(task?.data?.keyword || task?.result?.[0]?.keyword || task?.result?.[0]?.se_domain || '');
+function meaningfulVariantAttributes(attributes: Record<string, string | undefined>) {
+  return Object.entries(attributes).some(([key, value]) => key !== 'condition' && Boolean(value));
+}
+
+function fallbackModelIdentifier(title: string, attributes: Record<string, string | undefined>): IdentifierCandidate | undefined {
+  if (meaningfulVariantAttributes(attributes)) return undefined;
+  const normalized = normalizeText(title);
+  if (normalized.length < 5 || normalized.split(' ').length < 2) return undefined;
+  return { type: 'MODEL_ALIAS', value: normalized, source: 'ceniq-title', confidence: 0.72 };
 }
 
 export function mapShoppingCandidates(json: Json): NormalizedOfferCandidate[] {
   const raw: RawShoppingItem[] = [];
-  for (const task of json.tasks || []) walkItems(task?.result || [], raw, taskKeyword(task));
+  const rememberedKeywords = Array.isArray(json.__ceniqKeywords) ? json.__ceniqKeywords.map(String) : [];
+  for (const [index, task] of (json.tasks || []).entries()) {
+    const keyword = String(task?.data?.keyword || task?.result?.[0]?.keyword || rememberedKeywords[index] || '');
+    walkItems(task?.result || [], raw, keyword);
+  }
+
   const seen = new Set<string>();
   const output: NormalizedOfferCandidate[] = [];
   for (const { item, keyword } of raw) {
@@ -154,14 +180,16 @@ export function mapShoppingCandidates(json: Json): NormalizedOfferCandidate[] {
     const merchantName = String(item.seller_name || item.seller || merchantDomain || 'Merchant');
     const amount = price(item);
     const originalTitle = String(item.title);
-    const description = String(item.description || '');
+    const description = String(item.description || item.snippet || '');
     const identity = canonicalizeMerchantProductTitle(originalTitle, item.brand ? String(item.brand) : undefined);
     const sourceKey = String(item.offer_id || item.product_id || item.gid || `${url}|${originalTitle}`);
     const unique = `${merchantDomain}|${sourceKey}`;
     if (!url || !merchantDomain || seen.has(unique)) continue;
     seen.add(unique);
+
     const shippingRaw = Number(item.delivery_info?.delivery_price?.current ?? item.shipping_price);
-    const image = [...(item.product_images || []), item.image_url, ...(item.images || []).map((entry: any) => entry?.image_url || entry)].find((value) => /^https?:\/\//i.test(String(value)));
+    const image = [...(item.product_images || []), item.image_url, ...(item.images || []).map((entry: any) => entry?.image_url || entry)]
+      .find((value) => /^https?:\/\//i.test(String(value)));
 
     const explicitAttributes = extractAttributes(`${originalTitle} ${description}`);
     const queryAttributes = keyword ? extractAttributes(keyword) : {};
@@ -170,16 +198,30 @@ export function mapShoppingCandidates(json: Json): NormalizedOfferCandidate[] {
       storage: explicitAttributes.storage || queryAttributes.storage,
       ram: explicitAttributes.ram || queryAttributes.ram,
       connectivity: explicitAttributes.connectivity || queryAttributes.connectivity,
+      size: explicitAttributes.size || queryAttributes.size,
     };
 
+    const itemIdentifiers = identifiers(item);
+    const fallbackIdentifier = fallbackModelIdentifier(identity.title, attributes);
+    if (!itemIdentifiers.length && fallbackIdentifier) itemIdentifiers.push(fallbackIdentifier);
+
     output.push({
-      source: 'dataforseo-google-shopping', sourceKey, merchant: { name: merchantName, domain: merchantDomain },
-      title: identity.title, brand: identity.brand, model: item.model ? String(item.model) : undefined,
-      category: item.category ? String(item.category) : undefined, description: description || originalTitle,
-      url, image: image ? { url: String(image), source: 'dataforseo', provenance: 'variant', confidence: 0.75 } : undefined,
-      identifiers: identifiers(item), attributes, price: amount,
+      source: 'dataforseo-google-shopping',
+      sourceKey,
+      merchant: { name: merchantName, domain: merchantDomain },
+      title: identity.title,
+      brand: identity.brand,
+      model: item.model ? String(item.model) : undefined,
+      category: item.category ? String(item.category) : undefined,
+      description: description || originalTitle,
+      url,
+      image: image ? { url: String(image), source: 'dataforseo', provenance: 'variant', confidence: 0.75 } : undefined,
+      identifiers: itemIdentifiers,
+      attributes,
+      price: amount,
       shippingPrice: Number.isFinite(shippingRaw) && shippingRaw >= 0 ? shippingRaw : undefined,
-      currency: String(item.price?.currency || item.currency || 'EUR'), availability: item.product_availability || item.availability,
+      currency: String(item.price?.currency || item.currency || 'EUR'),
+      availability: item.product_availability || item.availability,
       evidence: {
         displayedPrice: item.price?.displayed_price || item.displayed_price,
         sellerText: [item.seller_name, item.seller, item.delivery_info?.delivery_message].filter(Boolean).join(' '),
