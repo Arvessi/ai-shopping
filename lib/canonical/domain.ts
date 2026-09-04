@@ -260,10 +260,29 @@ export function selectVariantForQuery<T extends { attributes: VariantAttributes;
 
 export type ProviderTaskState = { state: 'pending' | 'succeeded' | 'failed'; error?: string };
 export function providerTaskState(task: { status_code?: number; status_message?: string; result?: unknown }): ProviderTaskState {
-  if (task.status_code === 40601 || task.status_code === 40602) return { state: 'pending' };
-  if (typeof task.status_code === 'number' && task.status_code >= 40000) return { state: 'failed', error: task.status_message || `Provider error ${task.status_code}` };
-  if (Array.isArray(task.result)) return { state: 'succeeded' };
-  return { state: 'failed', error: task.status_message || 'Provider returned no result' };
+  if (
+    task.status_code === 40401 ||
+    task.status_code === 40601 ||
+    task.status_code === 40602
+  ) {
+    return { state: 'pending' };
+  }
+
+  if (typeof task.status_code === 'number' && task.status_code >= 40000) {
+    return {
+      state: 'failed',
+      error: task.status_message || `Provider error ${task.status_code}`,
+    };
+  }
+
+  if (Array.isArray(task.result)) {
+    return { state: 'succeeded' };
+  }
+
+  return {
+    state: 'failed',
+    error: task.status_message || 'Provider returned no result',
+  };
 }
 
 export function enrichmentLimitState(input: { deadlineAt: Date; attempts: number; maxAttempts: number; now?: Date }) {
