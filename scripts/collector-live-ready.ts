@@ -5,6 +5,7 @@ import { parseProductPage } from "../collector/product-page.ts";
 
 const slugs = ["euronics", "m79", "bite", "lmt"];
 const perStore = 2;
+const maxCandidates = 20;
 const report = [];
 
 for (const slug of slugs) {
@@ -14,8 +15,8 @@ for (const slug of slugs) {
     const entries = await expandSitemaps(store, roots, 12);
     const candidates = entries
       .map((entry) => entry.loc)
-      .filter((url) => looksLikeProductUrl(url, store.productUrlHints))
-      .slice(0, 80);
+      .filter((url) => looksLikeProductUrl(url, store.productUrlHints, store.slug))
+      .slice(0, maxCandidates);
 
     const offers = [];
     const errors: { url: string; error: string }[] = [];
@@ -28,7 +29,7 @@ for (const slug of slugs) {
       } catch (error) {
         errors.push({ url, error: error instanceof Error ? error.message : String(error) });
       }
-      await sleep(store.crawlDelayMs ?? 1000);
+      await sleep(Math.min(store.crawlDelayMs ?? 1000, 400));
     }
 
     report.push({
@@ -36,6 +37,7 @@ for (const slug of slugs) {
       roots,
       discoveredUrls: entries.length,
       candidateUrls: candidates.length,
+      candidateSamples: candidates.slice(0, 5),
       parsedOffers: offers.length,
       offers,
       errors: errors.slice(0, 5),
