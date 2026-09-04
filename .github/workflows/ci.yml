@@ -15,5 +15,6 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm test
+      - name: Collector v2 tests
+        run: node --experimental-strip-types --test tests/collector-v2.test.ts
       - run: npm run typecheck
