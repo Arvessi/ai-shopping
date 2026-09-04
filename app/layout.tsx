@@ -5,6 +5,7 @@ import './ceniq32.css';
 import './ceniq40.css';
 import './ceniq50.css';
 import './ceniq60.css';
+import './ceniq61.css';
 import Header from '@/components/Header';
 import Footer from '@/components/Footer';
 
