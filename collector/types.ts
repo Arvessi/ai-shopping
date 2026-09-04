@@ -1,0 +1,31 @@
+export type CollectorStore = {
+  slug: string;
+  name: string;
+  origin: string;
+  country: "LV" | "LT" | "EE" | "DE" | "PL" | "EU";
+  sitemapUrls: string[];
+  productUrlHints?: string[];
+  crawlDelayMs?: number;
+};
+
+export type SitemapEntry = {
+  loc: string;
+  lastmod?: string;
+};
+
+export type CollectedOffer = {
+  merchantSlug: string;
+  merchantName: string;
+  merchantCountry: string;
+  url: string;
+  title: string;
+  price: number;
+  currency: string;
+  imageUrl?: string;
+  availability?: string;
+  brand?: string;
+  sku?: string;
+  gtin?: string;
+  category?: string;
+  fetchedAt: string;
+};
