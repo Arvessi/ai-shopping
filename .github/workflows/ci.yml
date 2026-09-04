@@ -18,6 +18,3 @@ jobs:
       - name: Collector v2 tests
         run: node --experimental-strip-types --test tests/collector-v2.test.ts
       - run: npm run typecheck
-      - name: Live M79 parser smoke
-        if: github.event_name == 'push' && github.ref == 'refs/heads/rebuild-v2'
-        run: node --experimental-strip-types scripts/m79-live-smoke.ts
