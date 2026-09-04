@@ -1,5 +1,5 @@
 import { extractAttributes, normalizeText, providerTaskState, type IdentifierCandidate, type NormalizedOfferCandidate } from './domain.ts';
-import { canonicalizeMerchantProductTitle } from './title-normalization';
+import { canonicalizeMerchantProductTitle } from './title-normalization.ts';
 
 const API_BASE = 'https://api.dataforseo.com/v3';
 const REQUEST_TIMEOUT_MS = Math.min(20_000, Math.max(3_000, Number(process.env.DATAFORSEO_TIMEOUT_MS || 12_000)));

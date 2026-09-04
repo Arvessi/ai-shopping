@@ -1,5 +1,5 @@
-import { normalizeText } from './domain';
-import { canonicalizeMerchantProductTitle } from './title-normalization';
+import { normalizeText } from './domain.ts';
+import { canonicalizeMerchantProductTitle } from './title-normalization.ts';
 
 function unique(values: string[]) {
   const seen = new Set<string>();

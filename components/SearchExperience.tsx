@@ -189,8 +189,8 @@ export default function SearchExperience() {
     try {
       setStatus(
         hadInitialResults
-          ? 'Rezultāti gatavi — CENIQ fonā pārbauda vēl veikalus un variantus…'
-          : 'CENIQ meklē Latvijas veikalos un Google Shopping…',
+          ? 'Rezultāti gatavi — CENIQ fonā pārbauda vēl kataloga variantus…'
+          : 'CENIQ pārbauda kataloga variantus…',
       );
 
       const response = await fetch('/api/search/expand', {

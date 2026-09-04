@@ -28,6 +28,7 @@ export const collectorStores: CollectorStore[] = [
     country: "LV",
     sitemapUrls: [],
     productUrlHints: ["/products/"],
+    catalogUrls: ["https://www.rdveikals.lv/categories/lv/188/sort/5/filter/0_0_0_0/page/1/Mobilie-telefoni.html"],
     crawlDelayMs: 1200,
   },
   {
@@ -36,6 +37,7 @@ export const collectorStores: CollectorStore[] = [
     origin: "https://www.euronics.lv",
     country: "LV",
     sitemapUrls: [],
+    catalogUrls: ["https://www.euronics.lv/telefoni/viedtalruni", "https://www.euronics.lv/it/portativie-datori/klepjdatori", "https://www.euronics.lv/tv/televizori"],
     crawlDelayMs: 1200,
   },
   {
@@ -84,6 +86,7 @@ export const collectorStores: CollectorStore[] = [
     origin: "https://www.tet.lv",
     country: "LV",
     sitemapUrls: [],
+    catalogUrls: ["https://www.tet.lv/veikals"],
     crawlDelayMs: 1200,
   },
   {
@@ -100,6 +103,7 @@ export const collectorStores: CollectorStore[] = [
     origin: "https://www.lmt.lv",
     country: "LV",
     sitemapUrls: [],
+    catalogUrls: ["https://www.lmt.lv/veikals/visi-telefoni"],
     crawlDelayMs: 1200,
   },
   {
@@ -108,6 +112,7 @@ export const collectorStores: CollectorStore[] = [
     origin: "https://www.tele2.lv",
     country: "LV",
     sitemapUrls: [],
+    catalogUrls: ["https://www.tele2.lv/telefoni/"],
     crawlDelayMs: 1200,
   },
 ];

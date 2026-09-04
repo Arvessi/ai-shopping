@@ -7,6 +7,7 @@
   },
   "crons": [
     { "path": "/api/cron/alerts", "schedule": "15 6 * * *" },
-    { "path": "/api/cron/enrichment", "schedule": "23 3 * * *" }
+    { "path": "/api/cron/enrichment", "schedule": "23 3 * * *" },
+    { "path": "/api/cron/catalog-batch?stores=euronics,m79,bite,lmt,tele2,rd&limit=40", "schedule": "47 2 * * *" }
   ]
 }

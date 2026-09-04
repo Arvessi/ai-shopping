@@ -6,7 +6,9 @@ function decodeHtml(value: string): string {
     .replace(/&#39;|&apos;/g, "'")
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">");
+    .replace(/&gt;/g, ">")
+    .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCodePoint(Number.parseInt(code, 16)));
 }
 
 function meta(html: string, key: string): string | undefined {
@@ -37,6 +39,35 @@ function plainText(html: string): string {
       .replace(/&euro;/gi, "€")
       .replace(/\s+/g, " "),
   );
+}
+
+function labelledValue(text: string, labels: string[]): string | undefined {
+  const label = labels.map((value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  return text.match(new RegExp(`(?:${label})\\s*:?\\s*([A-Z0-9][A-Z0-9._\\/-]{3,})`, "i"))?.[1];
+}
+
+function genericOneTimePrice(html: string): number | undefined {
+  const text = plainText(html);
+  const pageLooksLikeProduct = /property=["']og:type["'][^>]+content=["']product["']/i.test(html)
+    || /(?:Preces\s+kods|Produkta\s+kods|SKU|Artikuls|Ražotājs|Razotajs)\s*:/i.test(text);
+  if (!pageLooksLikeProduct) return undefined;
+
+  const labelled = [
+    /(?:^|\s)(?:Cena|Price|Mūsu\s+cena|Musu\s+cena|Akcijas\s+cena)\s*:?\s*(\d{1,6}(?:[.,]\d{1,2})?)\s*€/gi,
+    /(?:^|\s)(?:Cena|Price)\s*:?\s*€\s*(\d{1,6}(?:[.,]\d{1,2})?)/gi,
+  ];
+  for (const pattern of labelled) {
+    const match = pattern.exec(text);
+    const value = numericPrice(match?.[1]);
+    if (value) return value;
+  }
+
+  for (const match of text.matchAll(/(\d{1,6}(?:[.,]\d{1,2})?)\s*€/g)) {
+    const context = text.slice(Math.max(0, match.index - 90), Math.min(text.length, match.index + match[0].length + 90));
+    if (/(?:\/\s*mēn|mēnesī|nomaks|līzing|leasing|installment|deposit|pirm[aā]\s+iemaksa|bez\s+pvn|shipping|piegāde)/i.test(context)) continue;
+    const value = numericPrice(match[1]);
+    if (value) return value;
+  }
 }
 
 function jsonLdBlocks(html: string): unknown[] {
@@ -74,7 +105,10 @@ function productNode(html: string): Record<string, any> | undefined {
 
 function firstOffer(node: Record<string, any> | undefined): Record<string, any> | undefined {
   const offers = node?.offers;
-  if (Array.isArray(offers)) return offers.find((offer) => offer && typeof offer === "object");
+  if (Array.isArray(offers)) {
+    return offers.find((offer) => offer && typeof offer === "object" && (offer.price != null || offer.lowPrice != null))
+      ?? offers.find((offer) => offer && typeof offer === "object");
+  }
   return offers && typeof offers === "object" ? offers : undefined;
 }
 
@@ -106,6 +140,12 @@ function biteOneTimePrice(html: string): number | undefined {
 function biteSku(html: string): string | undefined {
   const text = plainText(html);
   return text.match(/SKU\s+kods\s*:\s*([A-Z0-9._\/-]{4,})/i)?.[1];
+}
+
+function tele2OneTimePrice(html: string): number | undefined {
+  const text = decodeHtml(html);
+  const match = text.match(/p[eē]rkot\s+uzreiz\s+(\d{1,5}(?:[.,]\d{1,2})?)\s*€/i);
+  return numericPrice(match?.[1]);
 }
 
 function m79ConsumerPrice(html: string): number | undefined {
@@ -148,27 +188,28 @@ export function parseProductPage(
   const offer = firstOffer(product);
 
   const pageH1 = h1(html);
-  const title = String(
+  const title = decodeHtml(String(
     product?.name ??
-      (store.slug === "bite" ? pageH1 : undefined) ??
-      meta(html, "og:title") ??
       pageH1 ??
+      meta(html, "og:title") ??
       "",
-  ).trim();
+  )).trim();
   const structuredPrice = numericPrice(
     offer?.price ??
       offer?.lowPrice ??
       meta(html, "product:price:amount") ??
       meta(html, "og:price:amount"),
   );
-  const fallbackPrice = store.slug === "lmt"
+  const storeSpecificPrice = store.slug === "lmt"
     ? lmtOneTimePrice(html)
     : store.slug === "bite"
       ? biteOneTimePrice(html)
       : store.slug === "m79"
         ? m79ConsumerPrice(html)
+        : store.slug === "tele2"
+          ? tele2OneTimePrice(html)
         : undefined;
-  const price = structuredPrice ?? fallbackPrice;
+  const price = structuredPrice ?? storeSpecificPrice ?? genericOneTimePrice(html);
   const currency = String(
     offer?.priceCurrency ?? meta(html, "product:price:currency") ?? meta(html, "og:price:currency") ?? "EUR",
   ).toUpperCase();
@@ -182,7 +223,9 @@ export function parseProductPage(
       ? String(image.url ?? image.contentUrl ?? "")
       : String(image ?? meta(html, "og:image") ?? "");
 
-  const brand = typeof product?.brand === "object" ? product.brand?.name : product?.brand;
+  const text = plainText(html);
+  const brand = (typeof product?.brand === "object" ? product.brand?.name : product?.brand)
+    ?? labelledValue(text, ["Ražotājs", "Razotajs", "Manufacturer", "Brand"]);
   const gtin = product?.gtin13 ?? product?.gtin14 ?? product?.gtin12 ?? product?.gtin8 ?? product?.gtin;
   const sku = product?.sku
     ? String(product.sku)
@@ -192,7 +235,8 @@ export function parseProductPage(
         ? biteSku(html)
         : store.slug === "m79"
           ? m79Sku(url, title)
-          : undefined;
+          : labelledValue(text, ["Preces kods", "Produkta kods", "SKU", "Artikuls", "Modelis"]);
+  const mpn = product?.mpn ? String(product.mpn) : undefined;
 
   return {
     merchantSlug: store.slug,
@@ -207,6 +251,7 @@ export function parseProductPage(
     brand: brand ? String(brand) : undefined,
     sku,
     gtin: gtin ? String(gtin) : undefined,
+    mpn,
     category: product?.category ? String(product.category) : undefined,
     fetchedAt: new Date().toISOString(),
   };

@@ -7,6 +7,7 @@ export type CollectorStore = {
   country: "LV" | "LT" | "EE" | "DE" | "PL" | "EU";
   feedUrls?: string[];
   sitemapUrls: string[];
+  catalogUrls?: string[];
   productUrlHints?: string[];
   crawlDelayMs?: number;
 };
@@ -29,6 +30,7 @@ export type CollectedOffer = {
   brand?: string;
   sku?: string;
   gtin?: string;
+  mpn?: string;
   category?: string;
   fetchedAt: string;
 };

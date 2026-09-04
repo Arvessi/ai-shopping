@@ -38,7 +38,13 @@ async function locateVariant(candidate: ResolvedCandidate) {
   const strong = candidate.identifiers || [];
   for (const identifier of strong) {
     const found = await prisma.variantIdentifier.findFirst({
-      where: { type: identifier.type, normalizedValue: normalizedIdentifier(identifier.value) },
+      where: {
+        type: identifier.type,
+        normalizedValue: normalizedIdentifier(identifier.value),
+        ...(['SKU_ALIAS', 'MODEL_ALIAS'].includes(identifier.type)
+          ? { source: identifier.source || candidate.source }
+          : {}),
+      },
       select: { variant: { select: { id: true, familyId: true } } },
     });
     if (found) return found.variant;
@@ -186,7 +192,7 @@ async function ingestOne(candidate: ResolvedCandidate, observe = true) {
       },
     });
   }
-  return { accepted, familyId: family.id, variantId: variant.id, offerId: offer.id };
+  return { accepted, reason: accepted ? undefined : rejectionReason || `price-kind-${candidate.priceKind.toLowerCase()}`, familyId: family.id, variantId: variant.id, offerId: offer.id };
 }
 
 export async function ingestCandidates(candidates: NormalizedOfferCandidate[], options: { observe?: boolean } = {}) {

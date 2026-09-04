@@ -6,6 +6,7 @@ import { knownMerchantDomains } from "../collector/discovery.ts";
 import { discoveryMerchants } from "../collector/discovery-merchants.ts";
 import { parseMerchantXmlFeed } from "../collector/feed.ts";
 import { syncCollectorStore } from "../collector/orchestrator.ts";
+import { catalogProductLinks } from "../collector/catalog-adapter.ts";
 import type { CollectedOffer, CollectorStore } from "../collector/types.ts";
 
 const store: CollectorStore = {
@@ -87,6 +88,24 @@ test("extracts a generic schema.org Product offer", () => {
   assert.equal(offer.imageUrl, "https://cdn.example/phone.jpg");
 });
 
+test("extracts labelled one-time price and SKU from a product page without JSON-LD", () => {
+  const euronicsStore: CollectorStore = {
+    slug: "euronics", name: "Euronics", origin: "https://www.euronics.lv", country: "LV", sitemapUrls: [],
+  };
+  const html = `<html><head><meta property="og:type" content="product"><meta property="og:title" content="Sony WH-1000XM5, melna - Euronics"><meta property="og:image" content="https://img.example/xm5.jpg"></head><body><h1>Sony WH-1000XM5</h1><div>Preces kods: WH1000XM5B</div><div>Cena: 329.99 €</div></body></html>`;
+  const offer = parseProductPage(html, "https://www.euronics.lv/audio/austinas/WH1000XM5B/sony-wh-1000xm5", euronicsStore);
+  assert.ok(offer);
+  assert.equal(offer.price, 329.99);
+  assert.equal(offer.sku, "WH1000XM5B");
+});
+
+test("listing adapter respects base href and filters LMT comparison links", () => {
+  const rdStore: CollectorStore = { slug: "rd", name: "RD", origin: "https://www.rdveikals.lv", country: "LV", sitemapUrls: [], productUrlHints: ["/products/"] };
+  assert.deepEqual(catalogProductLinks(`<base href="/"><a href="products/lv/1/42/phone.html">Phone</a>`, "https://www.rdveikals.lv/categories/lv/page/1", rdStore), ["https://www.rdveikals.lv/products/lv/1/42/phone.html"]);
+  const lmtStore: CollectorStore = { slug: "lmt", name: "LMT", origin: "https://www.lmt.lv", country: "LV", sitemapUrls: [] };
+  assert.deepEqual(catalogProductLinks(`<a href="/veikals/visi-telefoni/iphone-16/128-gb?payment-type=installment-24">Phone</a><a href="/veikals/visi-telefoni/salidzini">Compare</a>`, lmtStore.origin, lmtStore), ["https://www.lmt.lv/veikals/visi-telefoni/iphone-16/128-gb"]);
+});
+
 test("extracts LMT one-time purchase price and model without JSON-LD offer", () => {
   const lmtStore: CollectorStore = {
     slug: "lmt",
@@ -110,6 +129,14 @@ test("extracts LMT one-time purchase price and model without JSON-LD offer", () 
   assert.ok(offer);
   assert.equal(offer.price, 628.99);
   assert.equal(offer.sku, "SM-S931BDBDEUE");
+});
+
+test("Tele2 uses the explicit one-time price and ignores the monthly payment", () => {
+  const tele2Store: CollectorStore = { slug: "tele2", name: "Tele2", origin: "https://www.tele2.lv", country: "LV", sitemapUrls: [] };
+  const html = `<html><head><meta name="description" content="Samsung Galaxy A16 uz nomaksu 3,95 €/mēn., pērkot uzreiz 95,00 €. Tele2"></head><body><h1>Samsung Galaxy A16 LTE 128GB</h1></body></html>`;
+  const offer = parseProductPage(html, "https://www.tele2.lv/telefoni/galaxy-a16-lte-128gb/", tele2Store);
+  assert.ok(offer);
+  assert.equal(offer.price, 95);
 });
 
 test("M79 selects consumer price and never the lower Bez PVN price", () => {

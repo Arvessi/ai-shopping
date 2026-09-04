@@ -24,16 +24,12 @@ export function collectedOfferToCandidate(offer: CollectedOffer): NormalizedOffe
   const key = sourceKey(offer);
   const identifiers: NonNullable<NormalizedOfferCandidate["identifiers"]> = [];
   if (offer.gtin) identifiers.push({ type: "GTIN", value: offer.gtin, source: "collector-v2", confidence: 0.98 });
-  if (offer.sku) identifiers.push({ type: "SKU_ALIAS", value: offer.sku, source: offer.merchantSlug, confidence: 0.85 });
-
-  // Always provide a merchant-scoped stable identity for collected product pages.
-  // Prefixing with merchant slug prevents accidental cross-store matching while
-  // still giving the canonical resolver enough confidence to persist the offer.
+  if (offer.mpn) identifiers.push({ type: "MPN", value: offer.mpn, source: "collector-v2", confidence: 0.92 });
   identifiers.push({
-    type: "MODEL_ALIAS",
-    value: `${offer.merchantSlug}:${offer.sku || key}`,
+    type: "SKU_ALIAS",
+    value: offer.sku || `page:${key}`,
     source: offer.merchantSlug,
-    confidence: 0.72,
+    confidence: offer.sku ? 0.85 : 0.68,
   });
 
   return {
@@ -69,15 +65,20 @@ export function collectedOfferToCandidate(offer: CollectedOffer): NormalizedOffe
 }
 
 export async function persistCollectedOffers(offers: CollectedOffer[]) {
-  if (!offers.length) return { examined: 0, accepted: 0, rejected: 0, results: [] };
+  if (!offers.length) return { examined: 0, accepted: 0, rejected: 0, rejectionReasons: {}, results: [] };
   const { ingestCandidates } = await import("../lib/canonical/catalog.ts");
   const candidates = offers.map(collectedOfferToCandidate);
   const results = await ingestCandidates(candidates);
   const accepted = results.filter((result) => result.accepted).length;
+  const rejectionReasons: Record<string, number> = {};
+  for (const result of results) {
+    if (!result.accepted) rejectionReasons[result.reason || "canonical-rejected"] = (rejectionReasons[result.reason || "canonical-rejected"] || 0) + 1;
+  }
   return {
     examined: offers.length,
     accepted,
     rejected: offers.length - accepted,
+    rejectionReasons,
     results,
   };
 }

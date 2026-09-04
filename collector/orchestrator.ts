@@ -6,6 +6,8 @@ export type SourceSyncResult = {
   offers: CollectedOffer[];
   examined?: number;
   rejected?: number;
+  discovered?: number;
+  rejectionReasons?: Record<string, number>;
   note?: string;
 };
 
@@ -15,6 +17,8 @@ export type StoreSyncAttempt = {
   offers: number;
   examined?: number;
   rejected?: number;
+  discovered?: number;
+  rejectionReasons?: Record<string, number>;
   message?: string;
 };
 
@@ -59,6 +63,8 @@ export async function syncCollectorStore(
         offers: offers.length,
         examined: result.examined,
         rejected: result.rejected,
+        discovered: result.discovered,
+        rejectionReasons: result.rejectionReasons,
         message: result.note,
       });
 

@@ -4,7 +4,6 @@ import { databaseConfigured, prisma } from '@/lib/db';
 import { isRestrictedShoppingQuery } from '@/lib/safety';
 import { searchCanonicalCatalog } from '@/lib/canonical/catalog';
 import { shapeCanonicalResults } from '@/lib/canonical/result-shaping';
-import { expandDiscoveryQueries } from '@/lib/canonical/query-expansion';
 import { canonicalizeMerchantProductTitle } from '@/lib/canonical/title-normalization';
 import { normalizeText } from '@/lib/canonical/domain';
 
@@ -49,8 +48,8 @@ export async function POST(request: Request) {
       .create({ data: { query: q.slice(0, 700), mode, userId: user?.id } })
       .catch(() => undefined);
 
-    // First response stays DB-only and fast. Provider discovery always refreshes in the
-    // background so a cached product can never become a permanent dead end.
+    // User search is strictly DB-only. Catalogue discovery and refresh run only
+    // through scheduled/admin ingestion jobs, never from an interactive request.
     const rawResults = await searchCatalogWithFallback(q);
     const results = shapeCanonicalResults(rawResults, q);
     const bestCoverage = coverage(results);
@@ -60,7 +59,6 @@ export async function POST(request: Request) {
       results,
       source: 'canonical-catalog',
       cached: true,
-      discoveryQueries: expandDiscoveryQueries(q),
       diagnostics: {
         rawProductGroups: rawResults.length,
         productGroups: results.length,
@@ -80,7 +78,7 @@ export async function POST(request: Request) {
           ),
         })),
       },
-      expansion: { enabled: true, query: q },
+      expansion: { enabled: false, query: q, reason: 'scheduled-catalogue-only' },
       enrichment: { enabled: false, query: q, jobId: null },
     });
   } catch (error) {

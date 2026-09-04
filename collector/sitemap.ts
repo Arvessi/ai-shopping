@@ -72,7 +72,15 @@ export function looksLikeProductUrl(url: string, hints: string[] = [], storeSlug
     // LMT catalogue product pages live below /veikals/<category>/<model> and
     // variants can add another segment. Category landing pages stop at 2 parts.
     if (storeSlug === "lmt") {
-      return parts[0] === "veikals" && parts.length >= 3;
+      return parts[0] === "veikals" && parts.length >= 3 && parts.at(-1) !== "salidzini";
+    }
+
+    if (storeSlug === "tele2") {
+      return parts[0] === "telefoni" && parts.length >= 2;
+    }
+
+    if (storeSlug === "tet") {
+      return parts[0] === "veikals" && parts.length >= 3 && /\.html$/i.test(parts.at(-1) || "");
     }
 
     // Bite device pages use /lv/<device-category>/<product-slug>. Keep this
@@ -92,8 +100,8 @@ export function looksLikeProductUrl(url: string, hints: string[] = [], storeSlug
       return parts[0] === "lv" && parts.length >= 3 && productCategories.has(category || "");
     }
 
-    if (hints.length && !hints.some((hint) => path.includes(hint.toLowerCase()))) return false;
-    return true;
+    if (hints.length) return hints.some((hint) => path.includes(hint.toLowerCase()));
+    return /(?:\/products?\/|\/produkts?\/|\/prece\/|\/item\/)/i.test(path) || (parts.length >= 3 && hasSkuLikeSegment(parts));
   } catch {
     return false;
   }

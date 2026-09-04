@@ -10,6 +10,13 @@ export type BatchSyncSummary = {
   selectedBySource: Record<CollectorSourceKind, number>;
   fellThroughToDiscovery: number;
   failedStores: string[];
+  urlsDiscovered: number;
+  productPagesExamined: number;
+  productsParsed: number;
+  rejected: number;
+  rejectionReasons: Record<string, number>;
+  durationMs: number;
+  tavilyCalls: number;
 };
 
 export type BatchSyncResult = {
@@ -21,6 +28,7 @@ export async function syncCollectorStores(
   stores: CollectorStore[],
   handlers: CollectorSourceHandlers,
 ): Promise<BatchSyncResult> {
+  const startedAt = Date.now();
   const results: StoreSyncResult[] = [];
 
   // Sequential on purpose for the first production version: it avoids a burst
@@ -45,6 +53,12 @@ export async function syncCollectorStores(
   const fellThroughToDiscovery = results.filter((result) =>
     result.attempts.some((attempt) => attempt.source === "discovery-fallback" && attempt.status !== "unavailable"),
   ).length;
+  const rejectionReasons: Record<string, number> = {};
+  for (const result of results) for (const attempt of result.attempts) {
+    for (const [reason, count] of Object.entries(attempt.rejectionReasons || {})) {
+      rejectionReasons[reason] = (rejectionReasons[reason] || 0) + count;
+    }
+  }
 
   return {
     results,
@@ -56,6 +70,13 @@ export async function syncCollectorStores(
       selectedBySource,
       fellThroughToDiscovery,
       failedStores: results.filter((result) => result.offers.length === 0).map((result) => result.storeSlug),
+      urlsDiscovered: results.reduce((sum, result) => sum + result.attempts.reduce((inner, attempt) => inner + (attempt.discovered || 0), 0), 0),
+      productPagesExamined: results.reduce((sum, result) => sum + result.attempts.reduce((inner, attempt) => inner + (attempt.examined || 0), 0), 0),
+      productsParsed: results.reduce((sum, result) => sum + result.offers.length, 0),
+      rejected: results.reduce((sum, result) => sum + result.attempts.reduce((inner, attempt) => inner + (attempt.rejected || 0), 0), 0),
+      rejectionReasons,
+      durationMs: Date.now() - startedAt,
+      tavilyCalls: 0,
     },
   };
 }

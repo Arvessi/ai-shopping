@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { collectedOfferToCandidate } from "../collector/canonical-bridge.ts";
+import { resolveCandidate } from "../lib/canonical/domain.ts";
 
 test("collector offer maps into canonical candidate with stable merchant identity", () => {
   const candidate = collectedOfferToCandidate({
@@ -26,4 +27,19 @@ test("collector offer maps into canonical candidate with stable merchant identit
   assert.ok(candidate.sourceKey.length >= 32);
   assert.ok(candidate.identifiers?.some((item) => item.type === "GTIN" && item.value === "1234567890123"));
   assert.ok(candidate.identifiers?.some((item) => item.type === "SKU_ALIAS" && item.value === "EX-256-BLK"));
+  assert.equal(candidate.identifiers?.some((item) => item.type === "MODEL_ALIAS"), false);
+});
+
+test("merchant SKUs remain local while matching titles and attributes converge", () => {
+  const base = {
+    merchantCountry: "LV", title: "Apple iPhone 16 128GB Black", price: 799, currency: "EUR", fetchedAt: new Date().toISOString(),
+  };
+  const first = collectedOfferToCandidate({ ...base, merchantSlug: "shop-a", merchantName: "Shop A", url: "https://shop-a.lv/iphone", sku: "LOCAL-1" });
+  const second = collectedOfferToCandidate({ ...base, merchantSlug: "shop-b", merchantName: "Shop B", url: "https://shop-b.lv/iphone", sku: "LOCAL-1" });
+  assert.notEqual(first.identifiers?.find((item) => item.type === "SKU_ALIAS")?.source, second.identifiers?.find((item) => item.type === "SKU_ALIAS")?.source);
+  const resolvedFirst = resolveCandidate(first);
+  const resolvedSecond = resolveCandidate(second);
+  assert.equal(resolvedFirst.familyKey, resolvedSecond.familyKey);
+  assert.equal(resolvedFirst.variantKey, resolvedSecond.variantKey);
+  assert.equal(resolvedFirst.validationStatus, "ACCEPTED");
 });
