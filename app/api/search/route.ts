@@ -2,7 +2,11 @@ import { NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/auth';
 import { databaseConfigured, prisma } from '@/lib/db';
 import { isRestrictedShoppingQuery } from '@/lib/safety';
-import { ingestCandidates, searchCanonicalCatalog } from '@/lib/canonical/catalog';
+import {
+  ingestCandidates,
+  recanonicalizeExistingOffers,
+  searchCanonicalCatalog,
+} from '@/lib/canonical/catalog';
 import { queueEnrichment } from '@/lib/canonical/enrichment';
 import {
   discoverShoppingLive,
@@ -54,14 +58,21 @@ export async function POST(request: Request) {
       })
       .catch(() => undefined);
 
+    // Repair offers that were ingested before the current family-title normalizer.
+    // This makes old Dateks/Bite/Euronics/etc. offers converge into one stable
+    // family instead of waiting until each store happens to reappear in a live SERP.
+    let recanonicalizedOfferCount = 0;
+    try {
+      recanonicalizedOfferCount = await recanonicalizeExistingOffers(q);
+    } catch (repairError) {
+      console.error('CENIQ canonical repair:', repairError);
+    }
+
     let results = await searchCanonicalCatalog(q);
-    let source = 'canonical-catalog';
+    let source = recanonicalizedOfferCount > 0 ? 'canonical-repaired' : 'canonical-catalog';
     let liveCandidateCount = 0;
     let lvStoreCandidateCount = 0;
 
-    // A thin catalog is expanded immediately from two independent discovery paths:
-    // Google Shopping live results and targeted searches across approved Latvian stores.
-    // Both paths feed the same canonical catalog; neither bypasses validation.
     if (!results.length || coverage(results) < 5) {
       const [liveResult, storeResult] = await Promise.allSettled([
         discoverShoppingLive(q).then(mapShoppingCandidates),
@@ -86,7 +97,12 @@ export async function POST(request: Request) {
       const discovered = [...liveCandidates, ...storeCandidates];
       if (discovered.length) {
         await ingestCandidates(discovered);
+
+        // A discovery pass can update source keys that used to live in old product
+        // families. Run the cheap DB-only repair once more before reading results.
+        recanonicalizedOfferCount += await recanonicalizeExistingOffers(q).catch(() => 0);
         results = await searchCanonicalCatalog(q);
+
         if (results.length) {
           source = storeCandidates.length
             ? 'canonical-lv-stores'
@@ -98,7 +114,7 @@ export async function POST(request: Request) {
     const bestCoverage = coverage(results);
     const bestVariants = Math.max(
       0,
-      ...results.map((product) => product.catalogVariants?.length || 0),
+      ...results.map((product) => product.catalogVariants?.filter((variant) => variant.offerCount > 0).length || 0),
     );
     const needsEnrichment =
       !results.length || bestCoverage < 3 || bestVariants < 2;
@@ -112,6 +128,20 @@ export async function POST(request: Request) {
       cached: source === 'canonical-catalog',
       liveCandidateCount,
       lvStoreCandidateCount,
+      recanonicalizedOfferCount,
+      diagnostics: {
+        productGroups: results.length,
+        bestCoverage,
+        bestVariants,
+        families: results.map((product) => ({
+          id: product.id,
+          title: product.title,
+          stores: product.storesCount,
+          variants: product.catalogVariants?.filter((variant) => variant.offerCount > 0).length || 0,
+          offers: product.offers?.length || 0,
+          hasImage: Boolean(product.image),
+        })),
+      },
       enrichment: {
         enabled: Boolean(job),
         query: q,
