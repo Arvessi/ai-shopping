@@ -1,5 +1,6 @@
 import { LATVIA_ELECTRONICS_STORES } from '@/lib/store-registry';
-import { normalizeText, type NormalizedOfferCandidate } from './domain';
+import { extractAttributes, normalizeText, type NormalizedOfferCandidate } from './domain';
+import { canonicalizeMerchantProductTitle } from './title-normalization';
 
 const API_BASE = 'https://api.dataforseo.com/v3';
 const PAGE_TIMEOUT_MS = 2800;
@@ -136,7 +137,7 @@ async function discoverPages(query: string) {
   const unique = new Map<string, FoundPage>();
   for (const page of found) {
     const existing = unique.get(page.url);
-    if (!existing || (!existing.price && page.price)) unique.set(page.url, page);
+    if (!existing || (!existing.price && page.price) || (!existing.image && page.image)) unique.set(page.url, page);
   }
   return Array.from(unique.values());
 }
@@ -178,7 +179,11 @@ function jsonLdProducts(html: string) {
 }
 
 async function enrichPage(page: FoundPage, query: string): Promise<FoundPage> {
-  if (page.price && page.price > 0) return page;
+  // If search discovery already gave us both price and image, there is nothing
+  // useful to add. Otherwise fetch the product page so images are available on
+  // the very first result render instead of waiting for background enrichment.
+  if (page.price && page.price > 0 && page.image) return page;
+
   try {
     const response = await fetch(page.url, {
       headers: { 'User-Agent': 'CENIQBot/1.0 (+https://ceniq.lv)', Accept: 'text/html,application/xhtml+xml' },
@@ -189,30 +194,35 @@ async function enrichPage(page: FoundPage, query: string): Promise<FoundPage> {
     if (!response.ok || !(response.headers.get('content-type') || '').includes('text/html')) return page;
     const html = (await response.text()).slice(0, 1_500_000);
 
+    const fallbackImage = meta(html, ['og:image', 'twitter:image', 'image']);
     for (const product of jsonLdProducts(html)) {
       const title = String(product.name || page.title);
       if (!matchesQuery(title, query)) continue;
+      const productImage = String(Array.isArray(product.image) ? product.image[0] : product.image || fallbackImage || page.image || '') || undefined;
       const offers = Array.isArray(product.offers) ? product.offers : product.offers ? [product.offers] : [];
       for (const offer of offers) {
-        const price = number(offer?.price || offer?.lowPrice);
-        if (!price) continue;
+        const foundPrice = number(offer?.price || offer?.lowPrice);
+        if (!foundPrice && !page.price) continue;
         return {
           ...page,
           title,
-          price,
+          price: foundPrice || page.price,
           currency: String(offer?.priceCurrency || page.currency || 'EUR'),
-          image: String(Array.isArray(product.image) ? product.image[0] : product.image || page.image || '') || undefined,
+          image: productImage,
         };
+      }
+
+      if (page.price) {
+        return { ...page, title, image: productImage };
       }
     }
 
-    const price = number(meta(html, ['product:price:amount', 'og:price:amount', 'price', 'priceAmount']));
-    if (!price) return page;
+    const foundPrice = number(meta(html, ['product:price:amount', 'og:price:amount', 'price', 'priceAmount']));
     return {
       ...page,
-      price,
+      price: foundPrice || page.price,
       currency: meta(html, ['product:price:currency', 'og:price:currency', 'priceCurrency']) || page.currency || 'EUR',
-      image: meta(html, ['og:image', 'twitter:image']) || page.image,
+      image: fallbackImage || page.image,
     };
   } catch {
     return page;
@@ -232,20 +242,25 @@ export async function discoverLatvianStoreCandidates(query: string): Promise<Nor
     const key = `${page.domain}|${page.url}|${page.price}`;
     if (seen.has(key)) continue;
     seen.add(key);
+
+    const originalTitle = page.title;
+    const identity = canonicalizeMerchantProductTitle(originalTitle);
     candidates.push({
       source: 'ceniq-lv-store-discovery',
       sourceKey: page.url,
       merchant: { name: page.merchant, domain: page.domain },
-      title: page.title,
-      description: page.snippet || undefined,
+      title: identity.title,
+      brand: identity.brand,
+      description: page.snippet || originalTitle,
       url: page.url,
-      image: page.image ? { url: page.image, source: 'store-discovery', provenance: 'variant', confidence: 0.8 } : undefined,
+      image: page.image ? { url: page.image, source: 'store-discovery', provenance: 'variant', confidence: 0.85 } : undefined,
+      attributes: extractAttributes(`${originalTitle} ${page.snippet}`),
       price: page.price,
       currency: page.currency || 'EUR',
       evidence: {
         displayedPrice: `${page.price} ${page.currency || 'EUR'}`,
         sellerText: page.merchant,
-        surroundingText: page.snippet,
+        surroundingText: `${originalTitle} ${page.snippet}`,
         explicitOneTime: true,
       },
     });
