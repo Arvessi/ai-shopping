@@ -75,6 +75,23 @@ export function looksLikeProductUrl(url: string, hints: string[] = [], storeSlug
       return parts[0] === "veikals" && parts.length >= 3;
     }
 
+    // Bite device pages use /lv/<device-category>/<product-slug>. Keep this
+    // deliberately narrow so sitemap sampling does not waste parser budget on
+    // service/content pages. We can expand categories as we validate them.
+    if (storeSlug === "bite") {
+      const category = parts[1];
+      const productCategories = new Set([
+        "telefoni",
+        "viedpulksteni",
+        "planšetdatori",
+        "datori",
+        "rūteri",
+        "ruteri",
+        "aksesuari",
+      ]);
+      return parts[0] === "lv" && parts.length >= 3 && productCategories.has(category || "");
+    }
+
     if (hints.length && !hints.some((hint) => path.includes(hint.toLowerCase()))) return false;
     return true;
   } catch {
