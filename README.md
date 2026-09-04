@@ -1,40 +1,50 @@
 # CENIQ
 
-Latvian-first price comparison + AI shopping assistant built with Next.js, TypeScript, PostgreSQL/Prisma, DataForSEO Merchant API and the OpenAI Responses API.
+Latvian-first price comparison and catalogue-backed product search built with Next.js, TypeScript, PostgreSQL, and Prisma.
 
-## Included
-- Latvian homepage with Search / Ceniq AI modes
-- DataForSEO Google Shopping product search and polling
-- Product grouping by Google Shopping product identity
-- Seller/offer refresh on the product page
-- Ceniq score: total price + delivery + seller/relevance signals
-- PostgreSQL product, offer and price-history persistence
-- Product detail pages and price-history chart
-- Email/password accounts with HTTP-only JWT session cookie
-- Wishlist and price alerts
-- Browser push subscriptions + service worker
-- Email alerts through Resend HTTPS API
-- Daily Vercel Cron route (Hobby-compatible cadence)
-- Affiliate click tracking + provider-agnostic redirect template
-- Light/dark responsive UI
-- Affiliate/privacy/terms pages
-- Guardrails preventing restricted shopping categories from being searched
+## Runtime architecture
 
-## First setup
+Normal user search reads only CENIQ's canonical `ProductFamily` / `ProductVariant` / `MerchantOffer` catalogue. It never calls Tavily or DataForSEO. Catalogue population is a separate scheduled workflow:
+
+1. public merchant feed/API when configured;
+2. public sitemap discovery;
+3. public category/listing adapter;
+4. optional, explicitly invoked discovery fallback.
+
+The collector normalizes global and merchant-scoped identity, separates real variants, excludes restricted products, rejects recurring prices, and expires stale offers from search.
+
+## Setup
+
 1. `npm install`
-2. Copy `.env.example` to `.env.local`
-3. Fill `DATABASE_URL`, `AUTH_SECRET`, `DATAFORSEO_LOGIN`, `DATAFORSEO_PASSWORD`
-4. Add `OPENAI_API_KEY` for Ceniq AI
-5. Run `npx prisma migrate deploy` (or `npm run db:push` for a fresh dev DB)
-6. `npm run dev`
+2. Copy `.env.example` to `.env.local`.
+3. Set `DATABASE_URL`, `AUTH_SECRET`, and `CRON_SECRET`.
+4. Run `npx prisma migrate deploy` (or `npm run db:push` for a disposable local database).
+5. Run `npm run dev`.
 
-## Vercel
-Add the same environment variables in Project Settings. `vercel.json` runs `/api/cron/alerts` once per day. Set `CRON_SECRET`; Vercel sends it as `Authorization: Bearer <CRON_SECRET>` for cron invocations.
+AI planning works locally without a provider key and searches the same CENIQ catalogue. `GEMINI_API_KEY` is optional for richer natural-language planning. DataForSEO credentials are optional legacy/discovery compatibility only.
 
-## Optional integrations
-- `AFFILIATE_REDIRECT_TEMPLATE`: use the exact template from your affiliate network. `{url}` and `{subid}` are replaced by Ceniq.
-- `RESEND_API_KEY` + `ALERT_FROM_EMAIL`: email price alerts.
-- `NEXT_PUBLIC_VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`: browser push.
+## Catalogue sync
 
-## Important DataForSEO note
-DataForSEO Google Shopping seller URLs can vary by result type and some direct URL fields are deprecated. Ceniq stores the usable URL returned by the API and routes outbound clicks through `/api/out` when an offer has been persisted.
+Run the daily multi-store job locally with:
+
+```sh
+curl "http://localhost:3000/api/cron/catalog-batch?stores=euronics,m79,bite,lmt,tele2,rd&limit=40"
+```
+
+In production, send `Authorization: Bearer $CRON_SECRET`. The response includes store, discovery, parsing, persistence, rejection, duration, merchant, and Tavily metrics. `cursor=N` selects a deterministic incremental slice; otherwise the slice rotates daily.
+
+For a database-free live parser smoke test:
+
+```sh
+node --experimental-strip-types scripts/collector-bulk-smoke.ts "euronics,m79,bite,lmt,tele2,rd" 20 0
+```
+
+## Verification
+
+```sh
+npm test
+npm run typecheck
+npm run build
+```
+
+Automatic Vercel deployments for `rebuild-v2` remain disabled in `vercel.json`.

@@ -1,6 +1,6 @@
 import type { ProductResult, VariantAttributes } from '@/lib/types';
-import { normalizeText, scoreExactVariant } from './domain';
-import { canonicalizeMerchantProductTitle } from './title-normalization';
+import { normalizeText, scoreExactVariant } from './domain.ts';
+import { canonicalizeMerchantProductTitle } from './title-normalization.ts';
 
 const PHONE_ALLOWED_AXES = new Set(['storage', 'ram', 'color', 'connectivity', 'condition']);
 const IPHONE_ALLOWED_AXES = new Set(['storage', 'color', 'connectivity', 'condition']);

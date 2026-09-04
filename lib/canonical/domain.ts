@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { canonicalizeMerchantProductTitle } from './title-normalization.ts';
 
 export type PriceKind = 'ONE_TIME' | 'MONTHLY' | 'DEPOSIT' | 'PLAN' | 'UNKNOWN';
 export type ValidationStatus = 'ACCEPTED' | 'QUARANTINED' | 'REJECTED';
@@ -175,7 +176,8 @@ export function resolveCandidate(candidate: NormalizedOfferCandidate): ResolvedC
   const withoutBrand = brandLabel
     ? stripped.replace(new RegExp(`\\b${brandLabel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi'), ' ').replace(/\s+/g, ' ').trim()
     : stripped;
-  const familyTitle = `${brandLabel || ''} ${withoutBrand || candidate.title}`.replace(/\s+/g, ' ').trim();
+  const canonical = canonicalizeMerchantProductTitle(withoutBrand || stripped || candidate.title, brandLabel);
+  const familyTitle = canonical.title;
   const normalizedTitle = normalizeText(familyTitle);
   const brand = normalizeText(candidate.brand || '').replace(/\s/g, '');
   const accessory = ACCESSORY.test(candidate.title) ? 'accessory:' : '';
@@ -183,6 +185,7 @@ export function resolveCandidate(candidate: NormalizedOfferCandidate): ResolvedC
   const identity = identifiers.find((item) => ['GTIN', 'EAN', 'UPC'].includes(item.type))
     || identifiers.find((item) => item.type === 'MPN')
     || identifiers.find((item) => item.type === 'MODEL_ALIAS');
+  const merchantLocalIdentity = identifiers.find((item) => item.type === 'SKU_ALIAS');
   const attrSignature = Object.entries(attributes).filter(([key, value]) => value && !(key === 'condition' && value === 'New'))
     .sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => `${key}:${normalizeText(String(value))}`).join('|');
   const variantKey = identity
@@ -191,7 +194,13 @@ export function resolveCandidate(candidate: NormalizedOfferCandidate): ResolvedC
   const price = classifyPrice(candidate);
   const accepted = price.kind === 'ONE_TIME';
   const totalPrice = accepted ? candidate.price + Math.max(0, candidate.shippingPrice || 0) : undefined;
-  const confidence = identity ? Math.max(0.7, identity.confidence || 0.8) : attrSignature ? 0.65 : 0.4;
+  const confidence = identity
+    ? Math.max(0.7, identity.confidence || 0.8)
+    : attrSignature
+      ? Math.max(0.65, merchantLocalIdentity?.confidence || 0)
+      : merchantLocalIdentity
+        ? Math.max(0.62, merchantLocalIdentity.confidence || 0)
+        : 0.4;
 
   return {
     ...candidate, availability: normalizeAvailability(candidate.availability), brand: candidate.brand, identifiers, attributes, familyKey, familyTitle,

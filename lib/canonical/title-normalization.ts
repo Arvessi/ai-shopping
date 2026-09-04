@@ -62,9 +62,15 @@ function normalizeKnownPhones(title: string) {
 
 function normalizeCategoryWords(value: string) {
   let result = value;
-  for (const [pattern, replacement] of CATEGORY_RULES) result = result.replace(pattern, ` ${replacement} `);
+  let category = '';
+  for (const [pattern, replacement] of CATEGORY_RULES) {
+    pattern.lastIndex = 0;
+    if (!category && pattern.test(result)) category = replacement;
+    pattern.lastIndex = 0;
+    result = result.replace(pattern, ' ');
+  }
   for (let pass = 0; pass < 2; pass += 1) result = result.replace(CANONICAL_CATEGORIES, '$1');
-  return result;
+  return `${result} ${category}`.trim();
 }
 
 function cleanGenericTitle(title: string) {
@@ -74,7 +80,7 @@ function cleanGenericTitle(title: string) {
     .replace(/\b(?:64|128|256|512|1024|2048)\s*GB\b/gi, ' ')
     .replace(/\b\d+(?:[.,]\d+)?\s*TB\b/gi, ' ')
     .replace(/\b\d{1,3}\s*GB\s*(?:RAM|memory|operativ\w*)\b/gi, ' ')
-    .replace(/\b\d{1,3}(?:[.,]\d)?\s*(?:inch(?:es)?|\")\b/gi, ' ')
+    .replace(/\b\d{1,3}(?:[.,]\d)?\s*(?:inch(?:es)?\b|\")/gi, ' ')
     .replace(/\b(?:8K|5K|4K|QHD|WQHD|UHD|FHD|Full\s*HD|\d{3,4}\s*[x×]\s*\d{3,4})\b/gi, ' ')
     .replace(/\b\d{2,3}\s*Hz\b/gi, ' ')
     .replace(COLOR_WORDS, ' ')

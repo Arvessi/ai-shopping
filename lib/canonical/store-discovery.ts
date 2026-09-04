@@ -1,6 +1,6 @@
 import { LATVIA_ELECTRONICS_STORES } from '@/lib/store-registry';
-import { extractAttributes, normalizeText, type IdentifierCandidate, type NormalizedOfferCandidate } from './domain';
-import { canonicalizeMerchantProductTitle } from './title-normalization';
+import { extractAttributes, normalizeText, type IdentifierCandidate, type NormalizedOfferCandidate } from './domain.ts';
+import { canonicalizeMerchantProductTitle } from './title-normalization.ts';
 
 const API_BASE = 'https://api.dataforseo.com/v3';
 const PAGE_TIMEOUT_MS = 3000;
