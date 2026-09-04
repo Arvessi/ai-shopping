@@ -95,6 +95,30 @@ test("extracts LMT one-time purchase price and model without JSON-LD offer", () 
   assert.equal(offer.sku, "SM-S931BDBDEUE");
 });
 
+test("M79 selects consumer price and never the lower Bez PVN price", () => {
+  const m79Store: CollectorStore = {
+    slug: "m79",
+    name: "M79",
+    origin: "https://m79.lv",
+    country: "LV",
+    sitemapUrls: [],
+  };
+  const html = `
+    <html><body>
+      <h1>Xiaomi Redmi Note 13 Dual 4G 6/128GB Ice Blue Damaged Box (00101950) Mobilais Telefons</h1>
+      <div>Galvenie parametri: Vairāk par preci 150.00 € Bez PVN 123.97 € Daudzums Ielikt grozā</div>
+    </body></html>`;
+
+  const offer = parseProductPage(
+    html,
+    "https://m79.lv/mobile-phone/mobilie-telefoni/xiaomi-redmi-note-13-dual-4g-6128gb-ice-blue-damaged-box-00101950",
+    m79Store,
+  );
+  assert.ok(offer);
+  assert.equal(offer.price, 150);
+  assert.equal(offer.sku, "00101950");
+});
+
 test("catalog safety layer rejects age-restricted or dangerous retail items", () => {
   assert.equal(isAllowedCatalogItem("Example smartphone 256GB"), true);
   assert.equal(isAllowedCatalogItem("nicotine vape device"), false);
