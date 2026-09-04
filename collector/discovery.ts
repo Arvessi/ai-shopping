@@ -26,6 +26,9 @@ export type DiscoveryOptions = {
   language?: string;
 };
 
+const TAVILY_SEARCH_DEPTH = "basic" as const;
+const MAX_RESULTS_PER_DISCOVERY_CALL = 20;
+
 function hostname(value: string): string {
   try {
     return new URL(value).hostname.toLowerCase().replace(/^www\./, "");
@@ -81,8 +84,10 @@ async function tavilySearch(query: string, options: DiscoveryOptions): Promise<D
     body: JSON.stringify({
       query,
       topic: "general",
-      search_depth: "basic",
-      max_results: Math.min(Math.max(options.maxResults ?? 20, 1), 20),
+      // Keep Tavily permanently on the 1-credit basic search path unless this
+      // constant is deliberately changed in code review.
+      search_depth: TAVILY_SEARCH_DEPTH,
+      max_results: Math.min(Math.max(options.maxResults ?? 20, 1), MAX_RESULTS_PER_DISCOVERY_CALL),
       include_answer: false,
       include_raw_content: false,
       ...(knownOnly ? { include_domains: knownMerchantDomains() } : {}),
@@ -110,7 +115,7 @@ async function braveSearch(query: string, options: DiscoveryOptions): Promise<Di
 
   const params = new URLSearchParams({
     q: query,
-    count: String(Math.min(Math.max(options.maxResults ?? 20, 1), 20)),
+    count: String(Math.min(Math.max(options.maxResults ?? 20, 1), MAX_RESULTS_PER_DISCOVERY_CALL)),
     country: (options.country ?? "LV").toUpperCase(),
     search_lang: options.language ?? "lv",
   });
