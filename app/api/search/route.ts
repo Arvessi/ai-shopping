@@ -4,6 +4,7 @@ import { databaseConfigured, prisma } from '@/lib/db';
 import { isRestrictedShoppingQuery } from '@/lib/safety';
 import { getCanonicalProduct, searchCanonicalCatalog } from '@/lib/canonical/catalog';
 import { shapeCanonicalResults } from '@/lib/canonical/result-shaping';
+import { reconcileStrongFamilies } from '@/lib/canonical/reconcile-results';
 import { canonicalizeMerchantProductTitle } from '@/lib/canonical/title-normalization';
 import { normalizeText } from '@/lib/canonical/domain';
 import type { ProductResult } from '@/lib/types';
@@ -126,7 +127,8 @@ export async function POST(request: Request) {
     // Interactive search is strictly catalogue/DB-only. No Tavily, Brave or
     // DataForSEO call can be triggered from this route.
     const rawResults = await searchCatalogWithFallback(q);
-    const shaped = shapeCanonicalResults(rawResults, q);
+    const reconciled = reconcileStrongFamilies(rawResults);
+    const shaped = shapeCanonicalResults(reconciled, q);
     const prioritized = await prioritizeV2(shaped, q);
     const results = prioritized.results;
     const bestCoverage = coverage(results);
@@ -139,6 +141,7 @@ export async function POST(request: Request) {
       message: results.length ? undefined : 'Šis produkts pašreizējā CENIQ katalogā vēl nav indeksēts.',
       diagnostics: {
         rawProductGroups: rawResults.length,
+        reconciledProductGroups: reconciled.length,
         productGroups: results.length,
         v2ProductGroups: prioritized.v2Families,
         bestCoverage,
