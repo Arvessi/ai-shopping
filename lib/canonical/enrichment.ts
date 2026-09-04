@@ -67,8 +67,61 @@ export async function pollEnrichment(jobId: string) {
     await prisma.enrichmentJob.update({ where: { id: job.id }, data: { status: 'succeeded', finishedAt: new Date(), lastError: null } });
     return { status: 'succeeded' as const, results: await searchCanonicalCatalog(job.normalizedQuery), ingested: candidates.length };
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Enrichment polling failed.';
-    const ended = attempts >= MAX_ATTEMPTS ? await terminal(job.id, 'failed', message) : null;
-    return ended ? { status: ended.status, error: ended.lastError || undefined } : { status: 'running' as const, retryAfterMs: Math.min(8_000, 1000 * attempts), error: message };
+  const message =
+    error instanceof Error
+      ? error.message
+      : 'Enrichment polling failed.';
+
+  const taskNotFound =
+    /task not found/i.test(message);
+
+  if (taskNotFound) {
+    const limits = enrichmentLimitState({
+      deadlineAt: job.deadlineAt,
+      attempts,
+      maxAttempts: MAX_ATTEMPTS,
+    });
+
+    if (limits.allowed) {
+      return {
+        status: 'running' as const,
+        retryAfterMs: Math.min(
+          8_000,
+          1500 * Math.max(1, attempts),
+        ),
+        error: 'provider_not_ready',
+      };
+    }
+
+    const ended = await terminal(
+      job.id,
+      'timed_out',
+      'Provider task was not available before the enrichment deadline.',
+    );
+
+    return {
+      status: ended.status,
+      error: ended.lastError || undefined,
+    };
   }
+
+  const ended =
+    attempts >= MAX_ATTEMPTS
+      ? await terminal(job.id, 'failed', message)
+      : null;
+
+  return ended
+    ? {
+        status: ended.status,
+        error: ended.lastError || undefined,
+      }
+    : {
+        status: 'running' as const,
+        retryAfterMs: Math.min(
+          8_000,
+          1000 * attempts,
+        ),
+        error: message,
+      };
+}
 }
