@@ -1,0 +1,24 @@
+{
+  "iphone": [
+    { "title": "Apple iPhone 16 128GB Black", "brand": "Apple", "gtin": "0195949820011", "price": 879, "merchant": "Store A", "domain": "1a.lv", "url": "https://1a.lv/iphone-16-128-black", "image": "https://img.example/iphone-black.jpg" },
+    { "title": "Apple iPhone 16 128 GB Black", "brand": "Apple", "gtin": "0195949820011", "price": 889, "merchant": "Store D", "domain": "220.lv", "url": "https://220.lv/iphone-16-128-black", "image": "https://img.example/iphone-black.jpg" },
+    { "title": "iPhone 16 128 GB White Apple", "brand": "Apple", "gtin": "0195949820028", "price": 889, "merchant": "Store B", "domain": "rdveikals.lv", "url": "https://rdveikals.lv/iphone-16-128-white", "image": "https://img.example/iphone-white.jpg" },
+    { "title": "Apple iPhone 16, 256GB, Black", "brand": "Apple", "gtin": "0195949820035", "price": 999, "merchant": "Store C", "domain": "euronics.lv", "url": "https://euronics.lv/iphone-16-256-black", "image": "https://img.example/iphone-black.jpg" },
+    { "title": "Apple iPhone 16 Pro 128GB Black", "brand": "Apple", "gtin": "0195949820042", "price": 1099, "merchant": "Store A", "domain": "1a.lv", "url": "https://1a.lv/iphone-16-pro" }
+  ],
+  "samsung": [
+    { "title": "Samsung Galaxy S25 256GB Navy", "brand": "Samsung", "gtin": "0880609123456", "price": 80, "displayedPrice": "80 EUR first payment, then 24 x 35 EUR", "description": "Device with tariff plan", "merchant": "Carrier", "domain": "tet.lv", "url": "https://tet.lv/s25-plan" },
+    { "title": "Samsung Galaxy S25 256GB Navy", "brand": "Samsung", "gtin": "0880609123456", "price": 849, "displayedPrice": "849 EUR", "description": "Pay now", "merchant": "Retailer", "domain": "1a.lv", "url": "https://1a.lv/s25" }
+  ],
+  "laptop": [
+    { "title": "ASUS TUF Gaming A15 FA507NV Ryzen 7 7735HS 16GB RAM 1TB SSD RTX 4060 15.6 inch", "brand": "ASUS", "mpn": "FA507NV", "price": 1199, "merchant": "Dateks", "domain": "dateks.lv", "url": "https://dateks.lv/fa507nv" },
+    { "title": "Portativais dators Asus TUF Gaming A15 FA507NV, R7-7735HS, 16 GB, 1 TB, GeForce RTX 4060", "brand": "ASUS", "mpn": "FA507NV", "price": 1219, "merchant": "1a.lv", "domain": "1a.lv", "url": "https://1a.lv/fa507nv" },
+    { "title": "ASUS TUF Gaming A15 FA507XI Ryzen 9 7940HS 32GB RAM 1TB SSD RTX 4070 15.6 inch", "brand": "ASUS", "mpn": "FA507XI", "price": 1599, "merchant": "220.lv", "domain": "220.lv", "url": "https://220.lv/fa507xi" }
+  ],
+  "generic": [
+    { "title": "LG OLED C4 55 inch 4K 120Hz", "brand": "LG", "mpn": "OLED55C4", "price": 1299, "merchant": "Euronics", "domain": "euronics.lv", "url": "https://euronics.lv/oled55c4" },
+    { "title": "Dell UltraSharp U2723QE 27 inch 4K IPS 60Hz", "brand": "Dell", "mpn": "U2723QE", "price": 579, "merchant": "Dateks", "domain": "dateks.lv", "url": "https://dateks.lv/u2723qe" },
+    { "title": "Sony WH-1000XM5 Black wireless headphones", "brand": "Sony", "mpn": "WH1000XM5B", "price": 329, "merchant": "RD Electronics", "domain": "rdveikals.lv", "url": "https://rdveikals.lv/wh1000xm5" },
+    { "title": "Canon EOS R50 body + RF-S 18-45mm kit Black", "brand": "Canon", "mpn": "EOSR50-1845", "price": 799, "merchant": "220.lv", "domain": "220.lv", "url": "https://220.lv/eos-r50-kit" }
+  ]
+}

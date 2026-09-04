@@ -148,12 +148,5 @@ export async function getMerchantProductInfoTask(taskId: string) {
 
 export function merchantTaskPending(json: Json) {
   const task = json?.tasks?.[0];
-
-  if (!task) return true;
-
-  return (
-    task.status_code === 40601 ||
-    task.status_code === 40602 ||
-    !Array.isArray(task.result)
-  );
+  return task?.status_code === 40601 || task?.status_code === 40602;
 }

@@ -32,6 +32,7 @@ const AXIS_LABELS: Record<string, string> = {
   size: 'Izmērs',
   condition: 'Stāvoklis',
 };
+Object.assign(AXIS_LABELS, { cpu: 'Procesors', gpu: 'Grafika', resolution: 'Izskirtspeja', panelType: 'Panelis', refreshRate: 'Frekvence', kit: 'Komplekts' });
 
 const AXIS_ORDER = [
   'storage',
@@ -39,6 +40,12 @@ const AXIS_ORDER = [
   'color',
   'connectivity',
   'size',
+  'cpu',
+  'gpu',
+  'resolution',
+  'panelType',
+  'refreshRate',
+  'kit',
   'condition',
 ];
 
@@ -79,8 +86,10 @@ function matchVariant(
 
 export default function ProductDetail({
   id,
+  variantId,
 }: {
   id: string;
+  variantId?: string;
 }) {
   const [product, setProduct] =
     useState<Product | null>(null);
@@ -105,9 +114,9 @@ export default function ProductDetail({
     useState('');
   const autoEnrichStarted = useRef(false);
 
-  async function load() {
+  async function load(requestedVariantId = variantId) {
     const response = await fetch(
-      `/api/products/${encodeURIComponent(id)}`,
+      `/api/products/${encodeURIComponent(id)}${requestedVariantId ? `?variantId=${encodeURIComponent(requestedVariantId)}` : ''}`,
       { cache: 'no-store' },
     );
 
@@ -137,7 +146,7 @@ export default function ProductDetail({
 
   useEffect(() => {
     load();
-  }, [id]);
+  }, [id, variantId]);
 
   const allOffers = useMemo(
     () => product?.offers || [],
@@ -150,10 +159,11 @@ export default function ProductDetail({
       Set<string>
     >();
 
-    for (const offer of allOffers) {
-      for (const [key, value] of Object.entries(
-        offer.variantData || {},
-      )) {
+    const sources = product?.catalogVariants?.length
+      ? product.catalogVariants.map((variant: any) => ({ variantData: variant.attributes }))
+      : allOffers;
+    for (const offer of sources) {
+      for (const [key, value] of Object.entries(offer.variantData || {})) {
         if (!value) continue;
 
         if (
@@ -179,7 +189,7 @@ export default function ProductDetail({
         ],
       ),
     ) as Record<string, string[]>;
-  }, [allOffers]);
+  }, [allOffers, product?.catalogVariants]);
 
   useEffect(() => {
     if (
@@ -189,6 +199,11 @@ export default function ProductDetail({
       return;
     }
 
+    const canonicalDefault = (product?.catalogVariants || []).find((variant: any) => variant.id === product?.selectedVariantId);
+    if (canonicalDefault) {
+      setSelected(canonicalDefault.attributes || {});
+      return;
+    }
     const cheapest = [...allOffers].sort(
       (a: any, b: any) =>
         a.totalPrice - b.totalPrice,
@@ -217,13 +232,31 @@ export default function ProductDetail({
     allOffers,
     variantOptions,
     selected,
+    product,
   ]);
+
+  const selectedVariant = useMemo(() =>
+    (product?.catalogVariants || []).find((variant: any) =>
+      Object.entries(selected).every(([key, value]) => !value || variant.attributes?.[key] === value),
+    ), [product?.catalogVariants, selected]);
+
+  function chooseVariantAxis(axis: string, option: string) {
+    const requested = { ...selected, [axis]: option };
+    const exact = (product?.catalogVariants || []).find((variant: any) =>
+      Object.entries(requested).every(([key, value]) => !value || variant.attributes?.[key] === value),
+    );
+    if (!exact && product?.catalogVariants?.length) return;
+    setSelected(exact?.attributes || requested);
+    setShowAll(false);
+    if (exact) {
+      window.history.replaceState(window.history.state, '', `/product/${encodeURIComponent(id)}?variantId=${encodeURIComponent(exact.id)}`);
+      void load(exact.id);
+    }
+  }
 
   const filteredOffers = useMemo(() => {
     return allOffers
-      .filter((offer: any) =>
-        matchVariant(offer, selected),
-      )
+      .filter((offer: any) => selectedVariant ? offer.variantId === selectedVariant.id : matchVariant(offer, selected))
       .sort((a: any, b: any) => {
         if (
           a.isBestOverall !==
@@ -236,7 +269,7 @@ export default function ProductDetail({
           a.totalPrice - b.totalPrice
         );
       });
-  }, [allOffers, selected]);
+  }, [allOffers, selected, selectedVariant]);
 
   const storeCount = useMemo(
     () =>
@@ -287,14 +320,7 @@ export default function ProductDetail({
       : 0;
 
   const selectedImage = useMemo(() => {
-    const catalogVariant = (product?.catalogVariants || []).find(
-      (variant: any) =>
-        Object.entries(selected).every(
-          ([key, value]) =>
-            !value ||
-            variant.attributes?.[key] === value,
-        ),
-    );
+    const catalogVariant = selectedVariant;
 
     const offerImage = filteredOffers.find(
       (offer: any) => Boolean(offer.image),
@@ -303,10 +329,10 @@ export default function ProductDetail({
     return (
       catalogVariant?.image ||
       offerImage ||
-      product?.image ||
+      product?.familyImage ||
       ''
     );
-  }, [product, selected, filteredOffers]);
+  }, [product, selectedVariant, filteredOffers]);
 
   async function runRefresh(
     force = false,
@@ -341,21 +367,22 @@ export default function ProductDetail({
       }
 
       if (!startData.pending) {
-        await load();
+        await load(selectedVariant?.id);
         return;
       }
 
       let stage =
         startData.stage || 'sellers';
       let taskId = startData.taskId;
+      let retryAfterMs = 750;
 
       for (
         let attempt = 0;
-        attempt < 50;
+        attempt < 12;
         attempt += 1
       ) {
         await new Promise((resolve) =>
-          setTimeout(resolve, 1300),
+          setTimeout(resolve, retryAfterMs),
         );
 
         const poll = await fetch(
@@ -378,6 +405,7 @@ export default function ProductDetail({
         }
 
         if (pollData.pending) {
+          retryAfterMs = Math.min(8000, Math.max(500, Number(pollData.retryAfterMs || retryAfterMs * 1.7)));
           stage =
             pollData.stage || stage;
           taskId =
@@ -385,7 +413,7 @@ export default function ProductDetail({
           continue;
         }
 
-        await load();
+        await load(selectedVariant?.id);
         setVerdict(null);
         return;
       }
@@ -459,7 +487,8 @@ export default function ProductDetail({
             'application/json',
         },
         body: JSON.stringify({
-          productId: id,
+          familyId: product.id,
+          variantId: selectedVariant?.id,
         }),
       },
     );
@@ -484,7 +513,8 @@ export default function ProductDetail({
             'application/json',
         },
         body: JSON.stringify({
-          productId: id,
+          familyId: product.id,
+          variantId: selectedVariant?.id,
           targetPrice: Number(target),
           emailEnabled: true,
           browserEnabled: true,
@@ -515,9 +545,7 @@ export default function ProductDetail({
 
     try {
       const response = await fetch(
-        `/api/products/${encodeURIComponent(
-          id,
-        )}/verdict`,
+        `/api/products/${encodeURIComponent(id)}/verdict${selectedVariant?.id ? `?variantId=${encodeURIComponent(selectedVariant.id)}` : ''}`,
         { method: 'POST' },
       );
 
@@ -643,16 +671,11 @@ export default function ProductDetail({
                                   ? 'active'
                                   : ''
                               }
+                              disabled={Boolean(product.catalogVariants?.length) && !(product.catalogVariants || []).some((variant: any) =>
+                                variant.attributes?.[axis] === option && Object.entries(selected).every(([key, value]) => key === axis || !value || variant.attributes?.[key] === value),
+                              )}
                               onClick={() => {
-                                setSelected(
-                                  (current) => ({
-                                    ...current,
-                                    [axis]:
-                                      option,
-                                  }),
-                                );
-
-                                setShowAll(false);
+                                chooseVariantAxis(axis, option);
                               }}
                             >
                               {option}

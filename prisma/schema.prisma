@@ -92,20 +92,29 @@ model PriceSnapshot {
 model Wishlist {
   id        String   @id @default(cuid())
   userId    String
-  productId String
+  productId String?
+  familyId  String?
+  variantId String?
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product   Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
+  family    ProductFamily? @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  variant   ProductVariant? @relation(fields: [variantId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
 
   @@unique([userId, productId])
+  @@index([userId, familyId, variantId])
 }
 
 model PriceAlert {
   id              String   @id @default(cuid())
   userId          String
-  productId       String
+  productId       String?
+  familyId        String?
+  variantId       String?
   user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  product         Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product         Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
+  family          ProductFamily? @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  variant         ProductVariant? @relation(fields: [variantId], references: [id], onDelete: Cascade)
   targetPrice     Float
   emailEnabled    Boolean  @default(true)
   browserEnabled  Boolean  @default(true)
@@ -115,6 +124,7 @@ model PriceAlert {
   updatedAt       DateTime @updatedAt
 
   @@index([active, productId])
+  @@index([active, variantId])
 }
 
 model SearchLog {
@@ -141,14 +151,17 @@ model PushSubscription {
 
 model AffiliateClick {
   id        String   @id @default(cuid())
-  offerId   String
-  offer     Offer    @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  offerId   String?
+  merchantOfferId String?
+  offer     Offer?    @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  merchantOffer MerchantOffer? @relation(fields: [merchantOfferId], references: [id], onDelete: Cascade)
   subId     String
   userAgent String?
   referer   String?
   createdAt DateTime @default(now())
 
   @@index([offerId, createdAt])
+  @@index([merchantOfferId, createdAt])
 }
 
 model SearchCache {
@@ -175,6 +188,7 @@ model Merchant {
   feeds       FeedSource[]
   offers       CatalogOffer[]
   crawlSources CrawlSource[]
+  merchantOffers MerchantOffer[]
 
   @@index([active])
 }
@@ -351,4 +365,205 @@ model CrawlPage {
   @@unique([sourceId, urlHash])
   @@index([sourceId, status, priority])
   @@index([status, nextCrawlAt])
+}
+
+enum ProductStatus {
+  ACTIVE
+  QUARANTINED
+  ARCHIVED
+}
+
+enum IdentifierType {
+  GTIN
+  EAN
+  UPC
+  MPN
+  SKU_ALIAS
+  MODEL_ALIAS
+}
+
+enum PriceKind {
+  ONE_TIME
+  MONTHLY
+  DEPOSIT
+  PLAN
+  UNKNOWN
+}
+
+enum ValidationStatus {
+  ACCEPTED
+  QUARANTINED
+  REJECTED
+}
+
+enum EnrichmentStatus {
+  queued
+  running
+  succeeded
+  failed
+  timed_out
+}
+
+model ProductFamily {
+  id              String        @id @default(cuid())
+  canonicalKey    String        @unique
+  canonicalTitle  String
+  normalizedTitle String
+  brand           String?
+  model           String?
+  category        String?
+  familyImageUrl  String?
+  familyImageSource String?
+  familyImageConfidence Float?
+  status          ProductStatus @default(ACTIVE)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  variants        ProductVariant[]
+  aliases         ProductAlias[]
+  wishlists       Wishlist[]
+  alerts          PriceAlert[]
+
+  @@index([normalizedTitle])
+  @@index([brand, model])
+}
+
+model ProductVariant {
+  id           String        @id @default(cuid())
+  familyId     String
+  family       ProductFamily @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  variantKey   String
+  attributes   Json
+  storage      String?
+  ram          String?
+  color        String?
+  connectivity String?
+  cpu          String?
+  gpu          String?
+  size         String?
+  resolution   String?
+  panelType    String?
+  refreshRate  String?
+  kit          String?
+  condition    String        @default("New")
+  status       ProductStatus @default(ACTIVE)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  identifiers  VariantIdentifier[]
+  images       VariantImage[]
+  offers       MerchantOffer[]
+  aliases      ProductAlias[]
+  wishlists    Wishlist[]
+  alerts       PriceAlert[]
+
+  @@unique([familyId, variantKey])
+  @@index([familyId, status])
+}
+
+model VariantIdentifier {
+  id              String         @id @default(cuid())
+  variantId       String
+  variant         ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  type            IdentifierType
+  value           String
+  normalizedValue String
+  source          String
+  confidence      Float          @default(1)
+  createdAt       DateTime       @default(now())
+
+  @@unique([type, normalizedValue, source])
+  @@index([type, normalizedValue])
+  @@index([variantId])
+}
+
+model VariantImage {
+  id             String         @id @default(cuid())
+  variantId      String
+  variant        ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  url            String
+  source         String
+  provenance     String
+  confidence     Float          @default(0.5)
+  lastVerifiedAt DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@unique([variantId, url])
+  @@index([variantId, confidence])
+}
+
+model MerchantOffer {
+  id               String           @id @default(cuid())
+  variantId        String
+  variant          ProductVariant   @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  merchantId       String
+  merchant         Merchant         @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  sourceType       String
+  sourceKey        String
+  url              String
+  imageUrl         String?
+  oneTimePrice     Float?
+  shippingPrice    Float?
+  totalPrice       Float?
+  currency         String           @default("EUR")
+  priceKind        PriceKind        @default(UNKNOWN)
+  availability     String?
+  stockQty         Int?
+  validationStatus ValidationStatus @default(QUARANTINED)
+  rejectionReason  String?
+  confidence       Float            @default(0.5)
+  firstSeenAt      DateTime         @default(now())
+  lastSeenAt       DateTime         @default(now())
+  expiresAt        DateTime?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  observations     OfferObservation[]
+  clicks           AffiliateClick[]
+
+  @@unique([merchantId, sourceKey])
+  @@index([variantId, validationStatus, priceKind, totalPrice])
+  @@index([lastSeenAt, expiresAt])
+}
+
+model OfferObservation {
+  id            String        @id @default(cuid())
+  offerId       String
+  offer         MerchantOffer @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  oneTimePrice  Float?
+  shippingPrice Float?
+  totalPrice    Float?
+  priceKind     PriceKind
+  availability  String?
+  observedAt    DateTime      @default(now())
+
+  @@index([offerId, observedAt])
+}
+
+model ProductAlias {
+  id        String          @id @default(cuid())
+  alias     String          @unique
+  familyId  String
+  family    ProductFamily   @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  variantId String?
+  variant   ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  createdAt DateTime        @default(now())
+}
+
+model EnrichmentJob {
+  id              String           @id @default(cuid())
+  normalizedQuery String
+  familyId        String?
+  status          EnrichmentStatus @default(queued)
+  attempts        Int              @default(0)
+  providerStage   String?
+  providerTaskId  String?
+  providerTaskIds Json?
+  startedAt       DateTime?
+  deadlineAt      DateTime
+  finishedAt      DateTime?
+  lastError       String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  @@index([normalizedQuery, status])
+  @@index([status, deadlineAt])
 }
