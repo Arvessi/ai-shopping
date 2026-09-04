@@ -116,7 +116,7 @@ function m79Sku(url: string, title: string): string | undefined {
 }
 
 const blockedCatalogTerms = [
-  /\b(ammunition|firearm|rifle|shotgun|handgun|switchblade|taser|pepper spray|mace)\b/i,
+  /\b(ammunition|firearm|rifle|shotgun|handgun|gun|weapon|knife|machete|switchblade|taser|pepper spray|mace)\b/i,
   /\b(vape|e-cigarette|nicotine|cigarette|cigar)\b/i,
   /\b(casino|sportsbook|betting|prediction market)\b/i,
   /\b(vodka|whisky|whiskey|beer|wine|rum|gin|tequila)\b/i,
