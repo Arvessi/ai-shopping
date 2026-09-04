@@ -22,6 +22,9 @@ const MAX_RESULTS_PER_QUERY = 20;
 const MAX_PAGES_PER_QUERY = 12;
 const freshAfter = new Date(Date.now() - 48 * 60 * 60 * 1000);
 const genericQueries = new Set(['sports','toys','laptop','headphones','smartphone','phone','tv','gaming','monitor','camera','bike','beauty','home appliance']);
+const ACCESSORY = /\b(?:case|cover|screen\s*protector|protective|tempered\s*glass|glass|charger|adapter|cable|holder|maci[nņ]s|vaci[nņ]s|apvalks|aizsargstikls|stikls|vāciņš|maciņš)\b/i;
+const CONDITION = /\b(?:izpakota|izpakots|refurb(?:ished)?|lietota|lietots|used|demo)\b/i;
+const STOP = new Set(['the','for','with','and','un','ar','new','jauns','jauna','phone','smartphone','mobile','5g','4g']);
 
 function clean(value: string) {
   return value.replace(/\s+/g, ' ').replace(/\s*\/\s*$/g, '').trim();
@@ -33,14 +36,28 @@ function isSpecificProductQuery(value: string) {
   return /\b[A-Z]{2,}[A-Z0-9-]{2,}\b/.test(q);
 }
 function tokens(value: string) {
-  return value.toLowerCase().match(/[a-z0-9]+/g)?.filter((token) => token.length >= 2) || [];
+  return value.toLowerCase().match(/[a-z0-9]+/g)?.filter((token) => token.length >= 2 && !STOP.has(token)) || [];
+}
+function phoneIdentity(value: string) {
+  const iphone = value.match(/\biphone\s+(\d{1,2})(?:\s*(e)|\s+(pro\s+max|pro|plus|air|mini|se))?/i);
+  if (iphone) return `iphone:${iphone[1]}:${(iphone[2] || iphone[3] || '').toLowerCase().replace(/\s+/g,'')}`;
+  const galaxy = value.match(/\bgalaxy\s+([a-z]\d{1,3})(?:\s+(ultra|plus|fe))?/i);
+  if (galaxy) return `galaxy:${galaxy[1].toLowerCase()}:${(galaxy[2] || '').toLowerCase()}`;
+  return '';
 }
 function looksRelevant(title: string, query: string) {
+  if (!ACCESSORY.test(query) && ACCESSORY.test(title)) return false;
+  if (!CONDITION.test(query) && CONDITION.test(title)) return false;
+
+  const wantedPhone = phoneIdentity(query);
+  if (wantedPhone && phoneIdentity(title) !== wantedPhone) return false;
+
   const wanted = tokens(query);
   if (!wanted.length) return false;
-  const haystack = tokens(title);
-  const matches = wanted.filter((token) => haystack.includes(token)).length;
-  return matches >= Math.max(2, Math.ceil(wanted.length * 0.55));
+  const haystack = new Set(tokens(title));
+  const matches = wanted.filter((token) => haystack.has(token)).length;
+  const required = wanted.length <= 3 ? wanted.length : Math.max(3, Math.ceil(wanted.length * 0.72));
+  return matches >= required;
 }
 
 const families = await prisma.productFamily.findMany({
@@ -61,15 +78,16 @@ const families = await prisma.productFamily.findMany({
 });
 const recent = await prisma.searchLog.findMany({ orderBy: { createdAt: 'desc' }, take: 80, select: { query: true } });
 
+// Recent exact user demand wins. Low-coverage families only fill the remaining slots.
 const candidates = new Map<string, string>();
+for (const row of recent) {
+  const q = clean(row.query);
+  if (isSpecificProductQuery(q)) candidates.set(q.toLowerCase(), q);
+}
 for (const family of families) {
   const merchantCount = new Set(family.variants.flatMap((variant) => variant.offers.map((offer) => offer.merchant.slug))).size;
   if (merchantCount > 2) continue;
   const q = clean(family.canonicalTitle);
-  if (isSpecificProductQuery(q)) candidates.set(q.toLowerCase(), q);
-}
-for (const row of recent) {
-  const q = clean(row.query);
   if (isSpecificProductQuery(q) && !candidates.has(q.toLowerCase())) candidates.set(q.toLowerCase(), q);
 }
 
@@ -92,7 +110,8 @@ for (const [index, query] of priorityQueries.entries()) {
   console.error(`${index + 1}. ${query}`);
   try {
     tavilyCalls += 1;
-    const discovered = await discoverProductUrls(query, { maxResults: MAX_RESULTS_PER_QUERY, knownMerchantsOnly: true, country: 'latvia', language: 'lv' });
+    // "cena" biases discovery toward real product/shop pages instead of editorial/accessory pages.
+    const discovered = await discoverProductUrls(`${query} cena`, { maxResults: MAX_RESULTS_PER_QUERY, knownMerchantsOnly: true, country: 'latvia', language: 'lv' });
     usageCredits += discovered.usageCredits || 0;
     const seen = new Set<string>();
     const urls = discovered.candidates
