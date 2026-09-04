@@ -1,4 +1,4 @@
-import { collectorStores } from "./store-registry.ts";
+import { discoveryMerchants } from "./discovery-merchants.ts";
 
 export type DiscoverySource = "tavily" | "brave";
 
@@ -9,6 +9,8 @@ export type DiscoveryCandidate = {
   snippet?: string;
   domain: string;
   merchantSlug?: string;
+  market?: "LV" | "LT" | "EE" | "EU";
+  deliveryToLatvia?: "native" | "verify";
 };
 
 export type DiscoveryResult = {
@@ -34,14 +36,14 @@ function hostname(value: string): string {
 
 function merchantForUrl(url: string) {
   const domain = hostname(url);
-  return collectorStores.find((store) => {
-    const storeDomain = hostname(store.origin);
-    return domain === storeDomain || domain.endsWith(`.${storeDomain}`);
+  return discoveryMerchants.find((merchant) => {
+    const merchantDomain = hostname(merchant.origin);
+    return domain === merchantDomain || domain.endsWith(`.${merchantDomain}`);
   });
 }
 
 export function knownMerchantDomains(): string[] {
-  return [...new Set(collectorStores.map((store) => hostname(store.origin)).filter(Boolean))];
+  return [...new Set(discoveryMerchants.map((merchant) => hostname(merchant.origin)).filter(Boolean))];
 }
 
 function normalizeCandidate(
@@ -60,6 +62,8 @@ function normalizeCandidate(
     snippet: String(raw.description ?? raw.content ?? "").trim() || undefined,
     domain,
     merchantSlug: merchant?.slug,
+    market: merchant?.market,
+    deliveryToLatvia: merchant?.deliveryToLatvia,
   };
 }
 
