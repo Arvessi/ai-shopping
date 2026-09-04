@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { getCanonicalProduct } from '@/lib/canonical/catalog';
+import { getCanonicalProduct, searchCanonicalCatalog } from '@/lib/canonical/catalog';
+import { shapeCanonicalResults } from '@/lib/canonical/result-shaping';
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
@@ -8,7 +9,17 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     const preferredVariantId = new URL(request.url).searchParams.get('variantId') || undefined;
     const canonical = await getCanonicalProduct(id, preferredVariantId);
     if (canonical) {
-      const selectedVariantId = canonical.selectedVariantId!;
+      // A product page must show one stable family even if older ingest runs left
+      // sibling families in the DB. Re-read siblings by canonical title and merge
+      // offers/variants for presentation, while keeping real variant ids.
+      const siblings = await searchCanonicalCatalog(canonical.title);
+      const shaped = shapeCanonicalResults(
+        siblings.length ? siblings : [canonical],
+        canonical.title,
+        preferredVariantId,
+      );
+      const product = shaped[0] || canonical;
+      const selectedVariantId = product.selectedVariantId!;
       const [observations, job] = await Promise.all([
         prisma.offerObservation.findMany({
           where: { offer: { variantId: selectedVariantId, validationStatus: 'ACCEPTED', priceKind: 'ONE_TIME' }, totalPrice: { not: null } },
@@ -17,7 +28,11 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
         prisma.enrichmentJob.findFirst({ where: { familyId: canonical.id, status: 'succeeded' }, orderBy: { finishedAt: 'desc' } }),
       ]);
       return NextResponse.json({ product: {
-        ...canonical, currentBestPrice: canonical.bestPrice, lastEnrichedAt: job?.finishedAt,
+        ...product,
+        id: canonical.id,
+        externalId: `family:${canonical.id}`,
+        currentBestPrice: product.bestPrice,
+        lastEnrichedAt: job?.finishedAt,
         snapshots: observations.map((row) => ({ id: row.id, price: row.totalPrice, recordedAt: row.observedAt })),
       } });
     }
