@@ -12,6 +12,7 @@
     "catalog:sync": "node --experimental-strip-types --experimental-loader ./scripts/ts-loader.mjs scripts/catalog-sync.ts",
     "catalog:bootstrap": "node --experimental-strip-types --experimental-loader ./scripts/ts-loader.mjs scripts/catalog-sync.ts --stores=core --limit=40 --slices=3 --concurrency=3",
     "catalog:coverage": "node --experimental-strip-types --experimental-loader ./scripts/ts-loader.mjs scripts/catalog-coverage.ts",
+    "catalog:coverage:tavily": "node --experimental-strip-types --experimental-loader ./scripts/ts-loader.mjs scripts/catalog-coverage-tavily.ts",
     "collector:smoke": "node --experimental-strip-types scripts/collector-smoke.ts",
     "collector:probe": "node --experimental-strip-types scripts/collector-probe.ts",
     "discovery:benchmark": "node --experimental-strip-types scripts/discovery-benchmark.ts",
