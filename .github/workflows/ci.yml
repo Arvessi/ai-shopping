@@ -24,3 +24,6 @@ jobs:
       - name: Diagnose sitemap URL patterns
         if: github.event_name == 'push' && github.ref == 'refs/heads/rebuild-v2'
         run: node --experimental-strip-types scripts/collector-url-diagnostics.ts
+      - name: Diagnose M79 product page structure
+        if: github.event_name == 'push' && github.ref == 'refs/heads/rebuild-v2'
+        run: node --experimental-strip-types scripts/m79-page-diagnostics.ts
