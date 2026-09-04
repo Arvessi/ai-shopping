@@ -24,7 +24,7 @@ export function inferVariantAttributes(title:string):VariantAttributes{
   const ram=title.match(/\b(4|6|8|12|16|24|32|48|64|96|128)\s*GB\s*(?:RAM|memory|operat[iī]v\w*)\b/i); if(ram)attributes.ram=`${ram[1]}GB`;
   for(const [pattern,label] of COLORS){ if(pattern.test(title)){ attributes.color=label; break; } }
   if(/\b5G\b/i.test(title))attributes.connectivity='5G'; else if(/\b4G\b/i.test(title))attributes.connectivity='4G';
-  const size=title.match(/\b(\d{1,3}(?:[.,]\d)?)\s*(?:inch(?:es)?|\")\b/i); if(size)attributes.size=`${size[1].replace(',','.')}\"`;
+  const size=title.match(/\b(\d{1,3}(?:[.,]\d)?)\s*(?:inch(?:es)?\b|\")/i); if(size)attributes.size=`${size[1].replace(',','.')}\"`;
   const hz=title.match(/\b(60|75|90|100|120|144|165|180|240|360)\s*Hz\b/i); if(hz)attributes.refreshRate=`${hz[1]}Hz`;
   if(/\bOLED\b/i.test(title))attributes.panelType='OLED'; else if(/\bQLED\b/i.test(title))attributes.panelType='QLED'; else if(/\bMini\s*LED\b/i.test(title))attributes.panelType='Mini LED'; else if(/\bIPS\b/i.test(title))attributes.panelType='IPS';
   if(/\b(?:4K|UHD)\b/i.test(title))attributes.resolution='4K'; else if(/\bQHD\b|2560\s*[x×]\s*1440/i.test(title))attributes.resolution='QHD'; else if(/\bFHD\b|Full\s*HD|1920\s*[x×]\s*1080/i.test(title))attributes.resolution='FHD';
