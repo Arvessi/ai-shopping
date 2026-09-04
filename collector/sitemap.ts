@@ -48,13 +48,35 @@ export function sameOrigin(url: string, origin: string): boolean {
   }
 }
 
-export function looksLikeProductUrl(url: string, hints: string[] = []): boolean {
+function hasSkuLikeSegment(parts: string[]) {
+  return parts.some((part) => {
+    if (part.length < 6 || part.length > 40) return false;
+    return /[a-z]/i.test(part) && /\d/.test(part) && /^[a-z0-9._-]+$/i.test(part);
+  });
+}
+
+export function looksLikeProductUrl(url: string, hints: string[] = [], storeSlug?: string): boolean {
   try {
     const parsed = new URL(url);
     const path = parsed.pathname.toLowerCase();
+    const parts = path.split("/").filter(Boolean);
     if (!path || path === "/") return false;
+    if (/(\/cart|\/checkout|\/login|\/users|\/search|\/compare|\/wishlist)(\/|$)/i.test(path)) return false;
+
+    // Euronics product pages are deep category URLs with a SKU/model code segment,
+    // e.g. /telefoni/viedtalruni/android/sm-a165fzkbeue/product-name.
+    if (storeSlug === "euronics") {
+      return parts.length >= 5 && hasSkuLikeSegment(parts);
+    }
+
+    // LMT catalogue product pages live below /veikals/<category>/<model> and
+    // variants can add another segment. Category landing pages stop at 2 parts.
+    if (storeSlug === "lmt") {
+      return parts[0] === "veikals" && parts.length >= 3;
+    }
+
     if (hints.length && !hints.some((hint) => path.includes(hint.toLowerCase()))) return false;
-    return !/(\/cart|\/checkout|\/login|\/users|\/search|\/compare|\/wishlist)(\/|$)/i.test(path);
+    return true;
   } catch {
     return false;
   }
