@@ -8,157 +8,66 @@ import { parseProductPage } from '../collector/product-page.ts';
 import { persistCollectedOffers } from '../collector/canonical-bridge.ts';
 import type { CollectedOffer } from '../collector/types.ts';
 
-if (!process.env.DATABASE_URL) {
-  console.error('DATABASE_URL is missing. Run: set -a; source .env.local; set +a');
-  process.exit(1);
-}
-if (!process.env.TAVILY_API_KEY) {
-  console.error('TAVILY_API_KEY is missing. Tavily gap fill was not started.');
-  process.exit(1);
-}
+if (!process.env.DATABASE_URL) { console.error('DATABASE_URL is missing. Run: set -a; source .env.local; set +a'); process.exit(1); }
+if (!process.env.TAVILY_API_KEY) { console.error('TAVILY_API_KEY is missing. Tavily gap fill was not started.'); process.exit(1); }
 
-const MAX_TAVILY_CALLS = 8;
-const MAX_RESULTS_PER_QUERY = 20;
-const MAX_PAGES_PER_QUERY = 12;
-const freshAfter = new Date(Date.now() - 48 * 60 * 60 * 1000);
-const genericQueries = new Set(['sports','toys','laptop','headphones','smartphone','phone','tv','gaming','monitor','camera','bike','beauty','home appliance']);
-const ACCESSORY = /\b(?:case|cover|screen\s*protector|protective|tempered\s*glass|glass|charger|adapter|cable|holder|maci[nņ]s|vaci[nņ]s|apvalks|aizsargstikls|stikls|vāciņš|maciņš)\b/i;
-const CONDITION = /\b(?:izpakota|izpakots|refurb(?:ished)?|lietota|lietots|used|demo)\b/i;
-const STOP = new Set(['the','for','with','and','un','ar','new','jauns','jauna','phone','smartphone','mobile','5g','4g']);
+const MAX_TAVILY_CALLS=8;
+const MAX_RESULTS_PER_QUERY=20;
+const MAX_PAGES_PER_CALL=12;
+const MAX_PRODUCT_QUERIES=4;
+const freshAfter=new Date(Date.now()-48*60*60*1000);
+const genericQueries=new Set(['sports','toys','laptop','headphones','smartphone','phone','tv','gaming','monitor','camera','bike','beauty','home appliance']);
+const ACCESSORY=/\b(?:case|cover|screen\s*protector|protective|tempered\s*glass|glass|charger|adapter|cable|holder|maci[nņ]s|vaci[nņ]s|apvalks|aizsargstikls|stikls|vāciņš|maciņš)\b/i;
+const CONDITION=/\b(?:izpakota|izpakots|refurb(?:ished)?|lietota|lietots|used|demo)\b/i;
+const STOP=new Set(['the','for','with','and','un','ar','new','jauns','jauna','phone','smartphone','mobile','5g','4g']);
+const MERCHANT_CLUSTERS=[
+  { name:'major-gaps', slugs:['220','1a','dateks','aio','balticdata','tet','evelatus'] },
+  { name:'long-tail-gaps', slugs:['tehnoland','707','dato','upgreat','24lv','need','cenuklubs'] },
+];
 
-function clean(value: string) {
-  return value.replace(/\s+/g, ' ').replace(/\s*\/\s*$/g, '').trim();
-}
-function isSpecificProductQuery(value: string) {
-  const q = clean(value);
-  if (q.length < 5 || genericQueries.has(q.toLowerCase()) || isRestrictedShoppingQuery(q)) return false;
-  if (/\d/.test(q)) return true;
-  return /\b[A-Z]{2,}[A-Z0-9-]{2,}\b/.test(q);
-}
-function tokens(value: string) {
-  return value.toLowerCase().match(/[a-z0-9]+/g)?.filter((token) => token.length >= 2 && !STOP.has(token)) || [];
-}
-function phoneIdentity(value: string) {
-  const iphone = value.match(/\biphone\s+(\d{1,2})(?:\s*(e)|\s+(pro\s+max|pro|plus|air|mini|se))?/i);
-  if (iphone) return `iphone:${iphone[1]}:${(iphone[2] || iphone[3] || '').toLowerCase().replace(/\s+/g,'')}`;
-  const galaxy = value.match(/\bgalaxy\s+([a-z]\d{1,3})(?:\s+(ultra|plus|fe))?/i);
-  if (galaxy) return `galaxy:${galaxy[1].toLowerCase()}:${(galaxy[2] || '').toLowerCase()}`;
-  return '';
-}
-function looksRelevant(title: string, query: string) {
-  if (!ACCESSORY.test(query) && ACCESSORY.test(title)) return false;
-  if (!CONDITION.test(query) && CONDITION.test(title)) return false;
+function clean(value:string){ return value.replace(/\s+/g,' ').replace(/\s*\/\s*$/g,'').trim(); }
+function isSpecificProductQuery(value:string){ const q=clean(value); if(q.length<5||genericQueries.has(q.toLowerCase())||isRestrictedShoppingQuery(q)||ACCESSORY.test(q))return false; if(/\d/.test(q))return true; return /\b[A-Z]{2,}[A-Z0-9-]{2,}\b/.test(q); }
+function tokens(value:string){ return value.toLowerCase().match(/[a-z0-9]+/g)?.filter(token=>token.length>=2&&!STOP.has(token))||[]; }
+function phoneIdentity(value:string){ const iphone=value.match(/\biphone\s+(\d{1,2})(?:\s*(e)|\s+(pro\s+max|pro|plus|air|mini|se))?/i); if(iphone)return `iphone:${iphone[1]}:${(iphone[2]||iphone[3]||'').toLowerCase().replace(/\s+/g,'')}`; const galaxy=value.match(/\bgalaxy\s+([a-z]\d{1,3})(?:\s+(ultra|plus|fe))?/i); if(galaxy)return `galaxy:${galaxy[1].toLowerCase()}:${(galaxy[2]||'').toLowerCase()}`; return ''; }
+function looksRelevant(title:string,query:string){ if(!ACCESSORY.test(query)&&ACCESSORY.test(title))return false; if(CONDITION.test(title)!==CONDITION.test(query))return false; const wantedPhone=phoneIdentity(query); if(wantedPhone&&phoneIdentity(title)!==wantedPhone)return false; const wanted=tokens(query); if(!wanted.length)return false; const haystack=new Set(tokens(title)); const matches=wanted.filter(token=>haystack.has(token)).length; const required=wanted.length<=3?wanted.length:Math.max(3,Math.ceil(wanted.length*.72)); return matches>=required; }
+function hostname(value:string){ try{return new URL(value).hostname.toLowerCase().replace(/^www\./,'');}catch{return '';} }
 
-  const wantedPhone = phoneIdentity(query);
-  if (wantedPhone && phoneIdentity(title) !== wantedPhone) return false;
+const families=await prisma.productFamily.findMany({where:{status:'ACTIVE'},orderBy:{updatedAt:'desc'},take:160,select:{canonicalTitle:true,variants:{select:{offers:{where:{validationStatus:'ACCEPTED',priceKind:'ONE_TIME',totalPrice:{not:null},lastSeenAt:{gte:freshAfter}},select:{merchant:{select:{slug:true}}}}}}}});
+const recent=await prisma.searchLog.findMany({orderBy:{createdAt:'desc'},take:80,select:{query:true}});
+const candidates=new Map<string,string>();
+for(const row of recent){ const q=clean(row.query); if(isSpecificProductQuery(q)&&!candidates.has(q.toLowerCase()))candidates.set(q.toLowerCase(),q); }
+for(const family of families){ const merchantCount=new Set(family.variants.flatMap(variant=>variant.offers.map(offer=>offer.merchant.slug))).size; if(merchantCount>2)continue; const q=clean(family.canonicalTitle); if(isSpecificProductQuery(q)&&!candidates.has(q.toLowerCase()))candidates.set(q.toLowerCase(),q); }
+const priorityQueries=[...candidates.values()].slice(0,MAX_PRODUCT_QUERIES);
+if(!priorityQueries.length){ console.error('No low-coverage specific product queries available for Tavily.'); await prisma.$disconnect(); process.exit(0); }
 
-  const wanted = tokens(query);
-  if (!wanted.length) return false;
-  const haystack = new Set(tokens(title));
-  const matches = wanted.filter((token) => haystack.has(token)).length;
-  const required = wanted.length <= 3 ? wanted.length : Math.max(3, Math.ceil(wanted.length * 0.72));
-  return matches >= required;
-}
+const nativeMerchants=discoveryMerchants.filter(merchant=>merchant.market==='LV'&&merchant.deliveryToLatvia==='native');
+const merchantBySlug=new Map(nativeMerchants.map(merchant=>[merchant.slug,merchant]));
+const collectorBySlug=new Map(collectorStores.map(store=>[store.slug,store]));
+let tavilyCalls=0; let usageCredits=0; const allOffers:CollectedOffer[]=[]; const queryResults:any[]=[];
+console.error(`CENIQ Tavily gap fill: ${priorityQueries.length} products × ${MERCHANT_CLUSTERS.length} merchant clusters (hard max ${MAX_TAVILY_CALLS})`);
 
-const families = await prisma.productFamily.findMany({
-  where: { status: 'ACTIVE' },
-  orderBy: { updatedAt: 'desc' },
-  take: 160,
-  select: {
-    canonicalTitle: true,
-    variants: {
-      select: {
-        offers: {
-          where: { validationStatus: 'ACCEPTED', priceKind: 'ONE_TIME', totalPrice: { not: null }, lastSeenAt: { gte: freshAfter } },
-          select: { merchant: { select: { slug: true } } },
-        },
-      },
-    },
-  },
-});
-const recent = await prisma.searchLog.findMany({ orderBy: { createdAt: 'desc' }, take: 80, select: { query: true } });
-
-// Recent exact user demand wins. Low-coverage families only fill the remaining slots.
-const candidates = new Map<string, string>();
-for (const row of recent) {
-  const q = clean(row.query);
-  if (isSpecificProductQuery(q)) candidates.set(q.toLowerCase(), q);
-}
-for (const family of families) {
-  const merchantCount = new Set(family.variants.flatMap((variant) => variant.offers.map((offer) => offer.merchant.slug))).size;
-  if (merchantCount > 2) continue;
-  const q = clean(family.canonicalTitle);
-  if (isSpecificProductQuery(q) && !candidates.has(q.toLowerCase())) candidates.set(q.toLowerCase(), q);
-}
-
-const priorityQueries = [...candidates.values()].slice(0, MAX_TAVILY_CALLS);
-if (!priorityQueries.length) {
-  console.error('No low-coverage specific product queries available for Tavily.');
-  await prisma.$disconnect();
-  process.exit(0);
-}
-
-const merchantBySlug = new Map(discoveryMerchants.filter((merchant) => merchant.market === 'LV' && merchant.deliveryToLatvia === 'native').map((merchant) => [merchant.slug, merchant]));
-const collectorBySlug = new Map(collectorStores.map((store) => [store.slug, store]));
-let tavilyCalls = 0;
-let usageCredits = 0;
-const allOffers: CollectedOffer[] = [];
-const queryResults = [];
-
-console.error(`CENIQ Tavily coverage: ${priorityQueries.length} bounded queries (hard max ${MAX_TAVILY_CALLS})`);
-for (const [index, query] of priorityQueries.entries()) {
-  console.error(`${index + 1}. ${query}`);
-  try {
-    tavilyCalls += 1;
-    // "cena" biases discovery toward real product/shop pages instead of editorial/accessory pages.
-    const discovered = await discoverProductUrls(`${query} cena`, { maxResults: MAX_RESULTS_PER_QUERY, knownMerchantsOnly: true, country: 'latvia', language: 'lv' });
-    usageCredits += discovered.usageCredits || 0;
-    const seen = new Set<string>();
-    const urls = discovered.candidates
-      .filter((candidate) => candidate.merchantSlug && merchantBySlug.has(candidate.merchantSlug))
-      .filter((candidate) => {
-        if (seen.has(candidate.url)) return false;
-        seen.add(candidate.url);
-        return true;
-      })
-      .slice(0, MAX_PAGES_PER_QUERY);
-
-    const queryOffers: CollectedOffer[] = [];
-    for (const candidate of urls) {
-      const store = collectorBySlug.get(candidate.merchantSlug!);
-      if (!store) continue;
-      try {
-        const html = await fetchText(candidate.url, 8_000);
-        const parsed = parseProductPage(html, candidate.url, store);
-        if (parsed && looksRelevant(parsed.title, query)) queryOffers.push(parsed);
-      } catch {
-        // Discovery is opportunistic. A blocked/stale candidate is simply ignored.
-      }
-      await sleep(120);
-    }
-    allOffers.push(...queryOffers);
-    queryResults.push({ query, discovered: discovered.candidates.length, examined: urls.length, parsed: queryOffers.length });
-    console.error(`   ${queryOffers.length} validated offers from ${urls.length} pages`);
-  } catch (error) {
-    queryResults.push({ query, discovered: 0, examined: 0, parsed: 0, error: error instanceof Error ? error.message : String(error) });
-    console.error(`   ERROR ${error instanceof Error ? error.message : String(error)}`);
+for(const query of priorityQueries){
+  for(const cluster of MERCHANT_CLUSTERS){
+    if(tavilyCalls>=MAX_TAVILY_CALLS)break;
+    const merchants=cluster.slugs.map(slug=>merchantBySlug.get(slug)).filter(Boolean) as NonNullable<ReturnType<typeof merchantBySlug.get>>[];
+    const includeDomains=merchants.map(merchant=>hostname(merchant.origin)).filter(Boolean);
+    console.error(`${tavilyCalls+1}. ${query} → ${cluster.name}`);
+    try{
+      tavilyCalls+=1;
+      const discovered=await discoverProductUrls(`${query} cena`,{maxResults:MAX_RESULTS_PER_QUERY,knownMerchantsOnly:true,country:'latvia',language:'lv',includeDomains});
+      usageCredits+=discovered.usageCredits||0;
+      const seen=new Set<string>();
+      const urls=discovered.candidates.filter(candidate=>candidate.merchantSlug&&cluster.slugs.includes(candidate.merchantSlug)).filter(candidate=>{if(seen.has(candidate.url))return false;seen.add(candidate.url);return true;}).slice(0,MAX_PAGES_PER_CALL);
+      const queryOffers:CollectedOffer[]=[];
+      for(const candidate of urls){ const store=collectorBySlug.get(candidate.merchantSlug!); if(!store)continue; try{ const html=await fetchText(candidate.url,8000); const parsed=parseProductPage(html,candidate.url,store); if(parsed&&looksRelevant(parsed.title,query))queryOffers.push(parsed); }catch{} await sleep(120); }
+      allOffers.push(...queryOffers);
+      queryResults.push({query,cluster:cluster.name,domains:includeDomains.length,discovered:discovered.candidates.length,examined:urls.length,parsed:queryOffers.length,merchants:[...new Set(queryOffers.map(offer=>offer.merchantSlug))]});
+      console.error(`   ${queryOffers.length} validated offers from ${urls.length} pages · ${[...new Set(queryOffers.map(offer=>offer.merchantSlug))].join(', ')||'no new merchants'}`);
+    }catch(error){ queryResults.push({query,cluster:cluster.name,discovered:0,examined:0,parsed:0,error:error instanceof Error?error.message:String(error)}); console.error(`   ERROR ${error instanceof Error?error.message:String(error)}`); }
   }
 }
 
-const uniqueOffers = [...new Map(allOffers.map((offer) => [`${offer.merchantSlug}|${offer.url}`, offer])).values()];
-const persisted = await persistCollectedOffers(uniqueOffers);
-
-console.log(JSON.stringify({
-  ok: true,
-  tavilyCalls,
-  usageCredits,
-  queries: priorityQueries.length,
-  discoveredValidatedOffers: uniqueOffers.length,
-  accepted: persisted.accepted,
-  rejected: persisted.rejected,
-  rejectionReasons: persisted.rejectionReasons,
-  dataForSeoCalls: 0,
-  queryResults,
-}, null, 2));
-
+const uniqueOffers=[...new Map(allOffers.map(offer=>[`${offer.merchantSlug}|${offer.url}`,offer])).values()];
+const persisted=await persistCollectedOffers(uniqueOffers);
+console.log(JSON.stringify({ok:true,strategy:'merchant-cluster-gap-fill',tavilyCalls,usageCredits,productQueries:priorityQueries.length,merchantClusters:MERCHANT_CLUSTERS.map(cluster=>cluster.name),discoveredValidatedOffers:uniqueOffers.length,accepted:persisted.accepted,rejected:persisted.rejected,rejectionReasons:persisted.rejectionReasons,dataForSeoCalls:0,newMerchants:[...new Set(uniqueOffers.map(offer=>offer.merchantSlug))],queryResults},null,2));
 await prisma.$disconnect();
