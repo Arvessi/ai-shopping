@@ -8,6 +8,7 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -15,6 +16,11 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - name: Collector v2 tests
-        run: node --experimental-strip-types --test tests/collector-v2.test.ts tests/batch-sync-v2.test.ts tests/canonical-bridge-v2.test.ts tests/bite-parser-v2.test.ts
-      - run: npm run typecheck
+      - name: Full test suite
+        run: npm test
+      - name: TypeScript
+        run: npm run typecheck
+      - name: Production build
+        run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
