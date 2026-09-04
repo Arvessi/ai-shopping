@@ -5,7 +5,8 @@ import { parseSitemapXml, looksLikeProductUrl } from "../collector/sitemap.ts";
 import { knownMerchantDomains } from "../collector/discovery.ts";
 import { discoveryMerchants } from "../collector/discovery-merchants.ts";
 import { parseMerchantXmlFeed } from "../collector/feed.ts";
-import type { CollectorStore } from "../collector/types.ts";
+import { syncCollectorStore } from "../collector/orchestrator.ts";
+import type { CollectedOffer, CollectorStore } from "../collector/types.ts";
 
 const store: CollectorStore = {
   slug: "test",
@@ -14,6 +15,19 @@ const store: CollectorStore = {
   country: "LV",
   sitemapUrls: [],
 };
+
+function fakeOffer(source = "feed"): CollectedOffer {
+  return {
+    merchantSlug: "test",
+    merchantName: "Test Shop",
+    merchantCountry: "LV",
+    url: `https://shop.example/${source}/product`,
+    title: "Example Product",
+    price: 99.99,
+    currency: "EUR",
+    fetchedAt: new Date().toISOString(),
+  };
+}
 
 test("parses sitemap index and urlset", () => {
   const index = parseSitemapXml(`<?xml version="1.0"?><sitemapindex><sitemap><loc>https://shop.example/a.xml</loc></sitemap></sitemapindex>`);
@@ -187,4 +201,46 @@ test("imports offer-style XML aliases and rejects unsafe catalogue entries", () 
   assert.equal(result.offers.length, 1);
   assert.equal(result.rejected, 1);
   assert.equal(result.offers[0]?.sku, "TV-55-1");
+});
+
+test("orchestrator stops after feed success and never spends discovery fallback", async () => {
+  let discoveryCalls = 0;
+  const feedStore: CollectorStore = { ...store, feedUrls: ["https://shop.example/feed.xml"] };
+  const result = await syncCollectorStore(feedStore, {
+    "merchant-feed": async () => ({ source: "merchant-feed", offers: [fakeOffer("feed")] }),
+    "discovery-fallback": async () => {
+      discoveryCalls += 1;
+      return { source: "discovery-fallback", offers: [fakeOffer("discovery")] };
+    },
+  });
+
+  assert.equal(result.selectedSource, "merchant-feed");
+  assert.equal(result.offers.length, 1);
+  assert.equal(discoveryCalls, 0);
+  assert.equal(result.attempts[0]?.status, "success");
+});
+
+test("orchestrator falls through empty sources until a later source succeeds", async () => {
+  const attempted: string[] = [];
+  const result = await syncCollectorStore(store, {
+    "merchant-feed": async () => {
+      attempted.push("feed");
+      return { source: "merchant-feed", offers: [] };
+    },
+    "catalog-adapter": async () => {
+      attempted.push("adapter");
+      return { source: "catalog-adapter", offers: [fakeOffer("adapter")] };
+    },
+    "discovery-fallback": async () => {
+      attempted.push("discovery");
+      return { source: "discovery-fallback", offers: [fakeOffer("discovery")] };
+    },
+  });
+
+  assert.deepEqual(attempted, ["feed", "adapter"]);
+  assert.equal(result.selectedSource, "catalog-adapter");
+  assert.equal(result.attempts[0]?.status, "empty");
+  assert.equal(result.attempts[1]?.source, "sitemap");
+  assert.equal(result.attempts[1]?.status, "unavailable");
+  assert.equal(result.attempts[2]?.status, "success");
 });
