@@ -43,6 +43,22 @@ export async function createShoppingTask(keyword: string) {
   return String(task.id);
 }
 
+export function shoppingTasksReadyIds(json: Json) {
+  const ids = new Set<string>();
+  for (const task of json.tasks || []) {
+    if (!Array.isArray(task?.result)) continue;
+    for (const row of task.result) {
+      if (row?.id) ids.add(String(row.id));
+    }
+  }
+  return ids;
+}
+
+export async function isShoppingTaskReady(taskId: string) {
+  const json = await request('/merchant/google/products/tasks_ready');
+  return shoppingTasksReadyIds(json).has(taskId);
+}
+
 export async function getShoppingTask(taskId: string) {
   const json = await request(`/merchant/google/products/task_get/advanced/${encodeURIComponent(taskId)}`);
   const task = json.tasks?.[0] || {};
