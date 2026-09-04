@@ -1,4 +1,5 @@
-import { providerTaskState, type IdentifierCandidate, type NormalizedOfferCandidate } from './domain.ts';
+import { extractAttributes, providerTaskState, type IdentifierCandidate, type NormalizedOfferCandidate } from './domain.ts';
+import { canonicalizeMerchantProductTitle } from './title-normalization';
 
 const API_BASE = 'https://api.dataforseo.com/v3';
 const REQUEST_TIMEOUT_MS = Math.min(15_000, Math.max(3_000, Number(process.env.DATAFORSEO_TIMEOUT_MS || 10_000)));
@@ -135,7 +136,9 @@ export function mapShoppingCandidates(json: Json): NormalizedOfferCandidate[] {
     const merchantDomain = domain(item.domain || url);
     const merchantName = String(item.seller_name || item.seller || merchantDomain || 'Merchant');
     const amount = price(item);
-    const sourceKey = String(item.offer_id || item.product_id || item.gid || `${url}|${item.title}`);
+    const originalTitle = String(item.title);
+    const identity = canonicalizeMerchantProductTitle(originalTitle, item.brand ? String(item.brand) : undefined);
+    const sourceKey = String(item.offer_id || item.product_id || item.gid || `${url}|${originalTitle}`);
     const unique = `${merchantDomain}|${sourceKey}`;
     if (!url || !merchantDomain || seen.has(unique)) continue;
     seen.add(unique);
@@ -143,16 +146,17 @@ export function mapShoppingCandidates(json: Json): NormalizedOfferCandidate[] {
     const image = [...(item.product_images || []), item.image_url, ...(item.images || []).map((entry: any) => entry?.image_url || entry)].find((value) => /^https?:\/\//i.test(String(value)));
     output.push({
       source: 'dataforseo-google-shopping', sourceKey, merchant: { name: merchantName, domain: merchantDomain },
-      title: String(item.title), brand: item.brand ? String(item.brand) : undefined, model: item.model ? String(item.model) : undefined,
-      category: item.category ? String(item.category) : undefined, description: item.description ? String(item.description) : undefined,
+      title: identity.title, brand: identity.brand, model: item.model ? String(item.model) : undefined,
+      category: item.category ? String(item.category) : undefined, description: item.description ? String(item.description) : originalTitle,
       url, image: image ? { url: String(image), source: 'dataforseo', provenance: 'variant', confidence: 0.75 } : undefined,
-      identifiers: identifiers(item), price: amount, shippingPrice: Number.isFinite(shippingRaw) && shippingRaw >= 0 ? shippingRaw : undefined,
+      identifiers: identifiers(item), attributes: extractAttributes(originalTitle), price: amount,
+      shippingPrice: Number.isFinite(shippingRaw) && shippingRaw >= 0 ? shippingRaw : undefined,
       currency: String(item.price?.currency || item.currency || 'EUR'), availability: item.product_availability || item.availability,
       evidence: {
         displayedPrice: item.price?.displayed_price || item.displayed_price,
         sellerText: [item.seller_name, item.seller, item.delivery_info?.delivery_message].filter(Boolean).join(' '),
         tags: Array.isArray(item.tags) ? item.tags.map(String) : [],
-        surroundingText: [item.description, item.price?.displayed_price, item.product_availability].filter(Boolean).join(' '),
+        surroundingText: [originalTitle, item.description, item.price?.displayed_price, item.product_availability].filter(Boolean).join(' '),
         priceMultiplier: Number(item.price?.multiplier || item.installment_count || 1),
         explicitOneTime: item.is_installment === true ? false : undefined,
       },
