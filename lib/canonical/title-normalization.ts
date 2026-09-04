@@ -7,9 +7,21 @@ const KNOWN_BRANDS = [
 ];
 
 const MERCHANT_SUFFIX = /\s+-\s+(?:Euronics|Dateks|AiO|Baltic Data|Bite|Tet|LMT|Tele2|220\.lv|1a\.lv|RD Electronics|Discover\.lv|Bigbox\.lv|M79|707\.lv|24\.lv)\b.*$/i;
-const CATEGORY_WORDS = /\b(?:produkts?|viedt[aā]lrunis|telefoni?|smartphone|mobile phone|mobilais telefons|laptop|notebook|portat[iī]vais dators?|dators?|monitor|monitors|televizors?|television|tv|headphones?|earbuds?|austi[nņ]as?|speaker|ska[lļ]runis|camera|kamera|printer|printeris|router|r[uū]teris|smartwatch|viedpulkstenis)\b/gi;
-const LOW_SIGNAL_WORDS = /\b(?:wireless|bluetooth|noise cancelling|noise canceling|anc|new|jauns|jauna)\b/gi;
+const LOW_SIGNAL_WORDS = /\b(?:wireless|bluetooth|noise cancelling|noise canceling|anc|new|jauns|jauna|produkts?)\b/gi;
 const COLOR_WORDS = /\b(?:black|midnight|obsidian|graphite|melns|melna|white|starlight|porcelain|balts|balta|navy|blue|ultramarine|zils|zila|green|mint|teal|zals|zala|gray|grey|silver|peleks|peleka|sudraba|pink|rose|roza|red|sarkans|sarkana|purple|violet|violets|violeta|gold|zelta)\b/gi;
+
+const CATEGORY_RULES: Array<[RegExp, string]> = [
+  [/\b(?:viedt[aā]lrunis|telefoni?|smartphone|mobile phone|mobilais telefons)\b/gi, 'phone'],
+  [/\b(?:laptop|notebook|portat[iī]vais dators?)\b/gi, 'laptop'],
+  [/\b(?:monitor|monitors)\b/gi, 'monitor'],
+  [/\b(?:televizors?|television|tv)\b/gi, 'tv'],
+  [/\b(?:headphones?|earbuds?|austi[nņ]as?)\b/gi, 'headphones'],
+  [/\b(?:speaker|ska[lļ]runis)\b/gi, 'speaker'],
+  [/\b(?:camera|kamera)\b/gi, 'camera'],
+  [/\b(?:printer|printeris)\b/gi, 'printer'],
+  [/\b(?:router|r[uū]teris)\b/gi, 'router'],
+  [/\b(?:smartwatch|viedpulkstenis)\b/gi, 'smartwatch'],
+];
 
 function tidy(value: string) {
   return value.replace(/[|–—]+/g, ' - ').replace(/\s+/g, ' ').replace(/^[-\s]+|[-\s]+$/g, '').trim();
@@ -45,8 +57,14 @@ function normalizeKnownPhones(title: string) {
   return null;
 }
 
+function normalizeCategoryWords(value: string) {
+  let result = value;
+  for (const [pattern, replacement] of CATEGORY_RULES) result = result.replace(pattern, ` ${replacement} `);
+  return result;
+}
+
 function cleanGenericTitle(title: string) {
-  return title
+  let value = title
     .replace(MERCHANT_SUFFIX, ' ')
     .replace(/\([^)]*[A-Z0-9]{5,}[\/-][A-Z0-9/-]*[^)]*\)/gi, ' ')
     .replace(/\b(?:64|128|256|512|1024|2048)\s*GB\b/gi, ' ')
@@ -56,8 +74,11 @@ function cleanGenericTitle(title: string) {
     .replace(/\b(?:8K|5K|4K|QHD|WQHD|UHD|FHD|Full\s*HD|\d{3,4}\s*[x×]\s*\d{3,4})\b/gi, ' ')
     .replace(/\b\d{2,3}\s*Hz\b/gi, ' ')
     .replace(COLOR_WORDS, ' ')
-    .replace(CATEGORY_WORDS, ' ')
-    .replace(LOW_SIGNAL_WORDS, ' ')
+    .replace(LOW_SIGNAL_WORDS, ' ');
+
+  value = normalizeCategoryWords(value);
+  return value
+    .replace(/\b(?:phone|laptop|monitor|tv|headphones|speaker|camera|printer|router|smartwatch)(?:\s+\1)+\b/gi, '$1')
     .replace(/\s*[,;|]+\s*/g, ' ')
     .replace(/\s+-\s*$/g, ' ')
     .replace(/\s+/g, ' ')
