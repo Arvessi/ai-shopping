@@ -3,12 +3,14 @@ import { isRestrictedShoppingQuery } from '@/lib/safety';
 import { acceptsMerchant, searchCanonicalCatalog } from '@/lib/canonical/catalog';
 import { resolveCandidate } from '@/lib/canonical/domain';
 import {
-  discoverShoppingLive,
+  discoverShoppingLiveMany,
   mapShoppingCandidates,
 } from '@/lib/canonical/dataforseo-client';
 import { discoverLatvianStoreCandidates } from '@/lib/canonical/store-discovery';
+import { expandDiscoveryQueries } from '@/lib/canonical/query-expansion';
+import { shapeCanonicalResults } from '@/lib/canonical/result-shaping';
 
-export const maxDuration = 30;
+export const maxDuration = 45;
 
 function compactCandidate(candidate: ReturnType<typeof resolveCandidate>) {
   return {
@@ -38,52 +40,35 @@ export async function GET(request: Request) {
   const q = String(url.searchParams.get('q') || '').trim();
 
   if (!q) {
-    return NextResponse.json(
-      { error: 'Missing q query parameter.' },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: 'Missing q query parameter.' }, { status: 400 });
   }
 
   if (isRestrictedShoppingQuery(q)) {
-    return NextResponse.json(
-      { error: 'Ceniq so produktu kategoriju nemekle.' },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: 'Ceniq so produktu kategoriju nemekle.' }, { status: 400 });
   }
 
   const startedAt = Date.now();
-
-  const before = await searchCanonicalCatalog(q).catch(() => []);
+  const discoveryQueries = expandDiscoveryQueries(q);
+  const beforeRaw = await searchCanonicalCatalog(q).catch(() => []);
+  const before = shapeCanonicalResults(beforeRaw, q);
 
   const [liveResult, storeResult] = await Promise.allSettled([
-    discoverShoppingLive(q).then(mapShoppingCandidates),
+    discoverShoppingLiveMany(discoveryQueries).then(mapShoppingCandidates),
     discoverLatvianStoreCandidates(q),
   ]);
 
-  const liveCandidates =
-    liveResult.status === 'fulfilled' ? liveResult.value : [];
-  const storeCandidates =
-    storeResult.status === 'fulfilled' ? storeResult.value : [];
-
+  const liveCandidates = liveResult.status === 'fulfilled' ? liveResult.value : [];
+  const storeCandidates = storeResult.status === 'fulfilled' ? storeResult.value : [];
   const resolved = [...liveCandidates, ...storeCandidates].map(resolveCandidate);
 
   const candidateSummary = {
     total: resolved.length,
-    accepted: resolved.filter(
-      (candidate) =>
-        candidate.validationStatus === 'ACCEPTED' && acceptsMerchant(candidate),
-    ).length,
-    rejected: resolved.filter(
-      (candidate) =>
-        candidate.validationStatus !== 'ACCEPTED' || !acceptsMerchant(candidate),
-    ).length,
+    accepted: resolved.filter((candidate) => candidate.validationStatus === 'ACCEPTED' && acceptsMerchant(candidate)).length,
+    rejected: resolved.filter((candidate) => candidate.validationStatus !== 'ACCEPTED' || !acceptsMerchant(candidate)).length,
     withImage: resolved.filter((candidate) => Boolean(candidate.image?.url)).length,
-    uniqueMerchants: Array.from(
-      new Set(resolved.map((candidate) => candidate.merchant.domain)),
-    ).filter(Boolean),
-    uniqueFamilies: Array.from(
-      new Set(resolved.map((candidate) => candidate.familyKey)),
-    ),
+    withStorage: resolved.filter((candidate) => Boolean(candidate.attributes.storage)).length,
+    uniqueMerchants: Array.from(new Set(resolved.map((candidate) => candidate.merchant.domain))).filter(Boolean),
+    uniqueFamilies: Array.from(new Set(resolved.map((candidate) => candidate.familyKey))),
   };
 
   const familiesBefore = before.map((product) => ({
@@ -103,6 +88,7 @@ export async function GET(request: Request) {
       variantId: offer.variantId,
       variantData: offer.variantData,
       totalPrice: offer.totalPrice,
+      dealScore: offer.dealScore,
       image: offer.image,
       url: offer.url,
     })),
@@ -110,30 +96,18 @@ export async function GET(request: Request) {
 
   return NextResponse.json({
     query: q,
+    discoveryQueries,
     durationMs: Date.now() - startedAt,
     providerStatus: {
-      live:
-        liveResult.status === 'fulfilled'
-          ? { ok: true, count: liveCandidates.length }
-          : {
-              ok: false,
-              error:
-                liveResult.reason instanceof Error
-                  ? liveResult.reason.message
-                  : String(liveResult.reason),
-            },
-      lvStores:
-        storeResult.status === 'fulfilled'
-          ? { ok: true, count: storeCandidates.length }
-          : {
-              ok: false,
-              error:
-                storeResult.reason instanceof Error
-                  ? storeResult.reason.message
-                  : String(storeResult.reason),
-            },
+      live: liveResult.status === 'fulfilled'
+        ? { ok: true, count: liveCandidates.length }
+        : { ok: false, error: liveResult.reason instanceof Error ? liveResult.reason.message : String(liveResult.reason) },
+      lvStores: storeResult.status === 'fulfilled'
+        ? { ok: true, count: storeCandidates.length }
+        : { ok: false, error: storeResult.reason instanceof Error ? storeResult.reason.message : String(storeResult.reason) },
     },
     catalogBefore: {
+      rawFamilyCount: beforeRaw.length,
       familyCount: familiesBefore.length,
       families: familiesBefore,
     },
