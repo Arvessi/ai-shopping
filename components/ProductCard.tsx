@@ -21,13 +21,19 @@ const AXIS_ORDER: Array<
   'ram',
   'connectivity',
   'size',
+  'cpu',
+  'gpu',
+  'resolution',
+  'panelType',
+  'refreshRate',
+  'kit',
   'condition',
 ];
 
-const AXIS_LABELS: Record<
+const AXIS_LABELS: Partial<Record<
   keyof VariantAttributes,
   string
-> = {
+>> = {
   storage: 'Atmiņa',
   color: 'Krāsa',
   ram: 'RAM',
@@ -35,6 +41,7 @@ const AXIS_LABELS: Record<
   size: 'Izmērs',
   condition: 'Stāvoklis',
 };
+Object.assign(AXIS_LABELS, { cpu: 'Procesors', gpu: 'Grafika', resolution: 'Izskirtspeja', panelType: 'Panelis', refreshRate: 'Frekvence', kit: 'Komplekts' });
 
 function money(
   value: number,
@@ -195,10 +202,13 @@ export default function ProductCard({
 
   const axes = useMemo(
     () =>
-      variantOptions(
-        product.offers,
-      ),
+      variantOptions(product.offers),
     [product.offers],
+  );
+
+  const catalogVariants = useMemo(
+    () => product.catalogVariants || [],
+    [product.catalogVariants],
   );
 
   const cheapest = useMemo(
@@ -216,7 +226,22 @@ export default function ProductCard({
       Partial<VariantAttributes>
     >({});
 
+  const selectedCatalogVariant = useMemo(
+    () => catalogVariants.find((variant) =>
+      Object.entries(selected).every(([key, value]) => !value || variant.attributes[key as keyof VariantAttributes] === value),
+    ),
+    [catalogVariants, selected],
+  );
+
   useEffect(() => {
+    const explicit = catalogVariants.find(
+      (variant) => variant.id === product.selectedVariantId,
+    );
+    if (explicit) {
+      setSelected(explicit.attributes);
+      setShowAll(false);
+      return;
+    }
     const defaults: Partial<
       VariantAttributes
     > = {};
@@ -247,6 +272,8 @@ export default function ProductCard({
     setShowAll(false);
   }, [
     product.id,
+    product.selectedVariantId,
+    catalogVariants,
     query,
     axes,
     cheapest,
@@ -254,14 +281,12 @@ export default function ProductCard({
 
   const selectedOffers =
     useMemo(() => {
-      let offers =
-        product.offers.filter(
-          (offer: OfferView) =>
-            matchesVariant(
-              offer,
-              selected,
-            ),
-        );
+      const exactVariant = catalogVariants.find((variant) =>
+        Object.entries(selected).every(([key, value]) => !value || variant.attributes[key as keyof VariantAttributes] === value),
+      );
+      const offers = product.offers.filter((offer: OfferView) =>
+        exactVariant ? offer.variantId === exactVariant.id : matchesVariant(offer, selected),
+      );
 
       return [
         ...offers,
@@ -283,6 +308,7 @@ export default function ProductCard({
     }, [
       product.offers,
       selected,
+      catalogVariants,
     ]);
 
   const stores =
@@ -298,18 +324,21 @@ export default function ProductCard({
     );
 
   const selectedBest =
-    selectedOffers[0] ||
-    cheapest;
+    selectedOffers[0];
 
   const currentImage =
-    selectedOffers.find(
+    catalogVariants.find((variant) =>
+      Object.entries(selected).every(([key, value]) => !value || variant.attributes[key as keyof VariantAttributes] === value),
+    )?.image || selectedOffers.find(
       (offer: OfferView) =>
         Boolean(
           offer.image,
         ),
     )?.image ||
-    product.image ||
+    product.familyImage ||
     '';
+
+  const productHref = `/product/${encodeURIComponent(product.id)}${selectedCatalogVariant?.id ? `?variantId=${encodeURIComponent(selectedCatalogVariant.id)}` : ''}`;
 
   const visibleOffers =
     showAll
@@ -323,12 +352,13 @@ export default function ProductCard({
     axis: keyof VariantAttributes,
     value: string,
   ) {
-    setSelected(
-      (current: Partial<VariantAttributes>) => ({
-        ...current,
-        [axis]: value,
-      }),
-    );
+    setSelected((current: Partial<VariantAttributes>) => {
+      const requested = { ...current, [axis]: value };
+      const exact = catalogVariants.find((variant) =>
+        Object.entries(requested).every(([key, selectedValue]) => !selectedValue || variant.attributes[key as keyof VariantAttributes] === selectedValue),
+      );
+      return exact?.attributes || (catalogVariants.length ? current : requested);
+    });
 
     setShowAll(false);
   }
@@ -344,9 +374,7 @@ export default function ProductCard({
 
     return (
       offer.url ||
-      `/product/${encodeURIComponent(
-        product.id,
-      )}`
+      productHref
     );
   }
 
@@ -379,8 +407,8 @@ export default function ProductCard({
               'application/json',
           },
           body: JSON.stringify({
-            productId:
-              product.id,
+            familyId: product.id,
+            variantId: selectedCatalogVariant?.id,
           }),
         },
       );
@@ -440,9 +468,7 @@ export default function ProductCard({
           </div>
 
           <Link
-            href={`/product/${encodeURIComponent(
-              product.id,
-            )}`}
+            href={productHref}
             className="resultfamily-title"
           >
             {product.title}
@@ -499,6 +525,9 @@ export default function ProductCard({
                                   ? 'active'
                                   : ''
                               }
+                              disabled={catalogVariants.length > 0 && !catalogVariants.some((variant) =>
+                                variant.attributes[axis] === option && Object.entries(selected).every(([key, value]) => key === axis || !value || variant.attributes[key as keyof VariantAttributes] === value),
+                              )}
                               onClick={() =>
                                 chooseVariant(
                                   axis,
@@ -551,9 +580,7 @@ export default function ProductCard({
 
           <div className="resultfamily-actions">
             <Link
-              href={`/product/${encodeURIComponent(
-                product.id,
-              )}`}
+              href={productHref}
             >
               Pilna analīze →
             </Link>

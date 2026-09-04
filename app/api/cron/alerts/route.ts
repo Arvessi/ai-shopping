@@ -1,26 +1,6 @@
 import { NextResponse } from 'next/server';
 import webpush from 'web-push';
 import { prisma } from '@/lib/db';
-import { createSellersTask, getSellersTask, mapSellerOffers, taskPending } from '@/lib/dataforseo';
-import { replaceOffers } from '@/lib/products';
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-async function refreshProduct(product: { id: string; externalId: string; gid: string | null; dataDocId: string | null }) {
-  try {
-    const task = await createSellersTask({ productId: product.externalId.startsWith('pid:') ? product.externalId.slice(4) : undefined, gid: product.gid || undefined, dataDocId: product.dataDocId || undefined });
-    for (let i = 0; i < 5; i += 1) {
-      await sleep(1200);
-      const json = await getSellersTask(task.taskId);
-      if (taskPending(json)) continue;
-      const offers = mapSellerOffers(json);
-      if (offers.length) await replaceOffers(product.id, offers);
-      break;
-    }
-  } catch (error) {
-    console.error('alert refresh', product.id, error);
-  }
-}
 
 async function sendEmail(to: string, title: string, price: number, target: number, productId: string) {
   const key = process.env.RESEND_API_KEY;
@@ -60,21 +40,29 @@ export async function GET(request: Request) {
   const auth = request.headers.get('authorization');
   if (!secret || auth !== `Bearer ${secret}`) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const active = await prisma.priceAlert.findMany({ where: { active: true }, include: { product: true, user: true }, take: 50 });
-  const products = Array.from(new Map<string, { id: string; externalId: string; gid: string | null; dataDocId: string | null }>(active.map((a: any) => [a.productId, a.product])).values()).slice(0, 10);
-  for (const product of products) await refreshProduct(product);
-
-  const fresh = await prisma.priceAlert.findMany({ where: { active: true }, include: { product: true, user: true }, take: 50 });
+  const fresh = await prisma.priceAlert.findMany({ where: { active: true }, include: { product: true, family: true, variant: true, user: true }, take: 50 });
   let triggered = 0;
   for (const alert of fresh) {
-    const price = alert.product.currentBestPrice;
+    const canonicalPrice = alert.familyId
+      ? (await prisma.merchantOffer.aggregate({
+          where: {
+            variant: alert.variantId ? { id: alert.variantId } : { familyId: alert.familyId },
+            validationStatus: 'ACCEPTED', priceKind: 'ONE_TIME', totalPrice: { not: null },
+            OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+          },
+          _min: { totalPrice: true },
+        }))._min.totalPrice
+      : null;
+    const price = canonicalPrice ?? alert.product?.currentBestPrice;
     if (price == null || price > alert.targetPrice) continue;
     const recently = alert.lastTriggeredAt && Date.now() - alert.lastTriggeredAt.getTime() < 1000 * 60 * 60 * 24 * 3;
     if (recently) continue;
-    if (alert.emailEnabled) await sendEmail(alert.user.email, alert.product.title, price, alert.targetPrice, alert.productId).catch(console.error);
-    if (alert.browserEnabled) await sendPush(alert.userId, alert.product.title, price, alert.productId).catch(console.error);
+    const title = alert.family?.canonicalTitle || alert.product?.title || 'CENIQ produkts';
+    const productId = alert.familyId || alert.productId || '';
+    if (alert.emailEnabled) await sendEmail(alert.user.email, title, price, alert.targetPrice, productId).catch(console.error);
+    if (alert.browserEnabled) await sendPush(alert.userId, title, price, productId).catch(console.error);
     await prisma.priceAlert.update({ where: { id: alert.id }, data: { lastTriggeredAt: new Date() } });
     triggered += 1;
   }
-  return NextResponse.json({ ok: true, checked: fresh.length, refreshed: products.length, triggered });
+  return NextResponse.json({ ok: true, checked: fresh.length, refreshed: 0, triggered });
 }

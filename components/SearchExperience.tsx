@@ -329,10 +329,11 @@ export default function SearchExperience() {
           startData.stage ||
             'products',
         );
+      let retryAfterMs = 750;
 
       for (
         let attempt = 0;
-        attempt < 40;
+        attempt < 12;
         attempt += 1
       ) {
         if (
@@ -346,7 +347,7 @@ export default function SearchExperience() {
           (resolve) =>
             window.setTimeout(
               resolve,
-              1500,
+              retryAfterMs,
             ),
         );
 
@@ -393,6 +394,8 @@ export default function SearchExperience() {
           setStatus('');
           return;
         }
+
+        retryAfterMs = Math.min(8000, Math.max(500, Number(data.retryAfterMs || retryAfterMs * 1.7)));
 
         taskId = String(
           data.taskId ||

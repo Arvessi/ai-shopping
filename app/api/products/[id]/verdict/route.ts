@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+import { getCanonicalProduct } from '@/lib/canonical/catalog';
 
 export const maxDuration = 30;
 
@@ -222,7 +223,7 @@ async function geminiVerdict(
 }
 
 export async function POST(
-  _request: Request,
+  request: Request,
   context: {
     params: Promise<{ id: string }>;
   },
@@ -231,24 +232,22 @@ export async function POST(
     const { id } =
       await context.params;
 
-    const product =
-      await prisma.product.findUnique({
-        where: { id },
-        include: {
-          offers: {
-            orderBy: {
-              totalPrice: 'asc',
-            },
-            take: 20,
-          },
-          snapshots: {
-            orderBy: {
-              recordedAt: 'asc',
-            },
-            take: 180,
-          },
-        },
-      });
+    const variantId = new URL(request.url).searchParams.get('variantId') || undefined;
+    const canonical = await getCanonicalProduct(id, variantId);
+    const product = canonical
+      ? {
+          ...canonical,
+          currentBestPrice: canonical.bestPrice,
+          offers: canonical.offers.filter((offer) => offer.variantId === canonical.selectedVariantId),
+          snapshots: (await prisma.offerObservation.findMany({
+            where: { offer: { variantId: canonical.selectedVariantId }, totalPrice: { not: null } },
+            orderBy: { observedAt: 'asc' }, take: 180,
+          })).map((row) => ({ price: row.totalPrice, recordedAt: row.observedAt })),
+        }
+      : await prisma.product.findUnique({
+          where: { id },
+          include: { offers: { orderBy: { totalPrice: 'asc' }, take: 20 }, snapshots: { orderBy: { recordedAt: 'asc' }, take: 180 } },
+        });
 
     if (!product) {
       return NextResponse.json(

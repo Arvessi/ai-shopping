@@ -5,10 +5,17 @@ export type VariantAttributes = {
   connectivity?: string;
   size?: string;
   condition?: string;
+  cpu?: string;
+  gpu?: string;
+  resolution?: string;
+  panelType?: string;
+  refreshRate?: string;
+  kit?: string;
 };
 
 export type OfferView = {
   id?: string;
+  variantId?: string;
   merchant: string;
   merchantDomain?: string;
   variantLabel?: string;
@@ -28,6 +35,15 @@ export type OfferView = {
   isBestOverall: boolean;
 };
 
+export type CatalogVariantView = {
+  id: string;
+  variantKey: string;
+  image?: string;
+  attributes: VariantAttributes;
+  offerCount: number;
+  bestPrice?: number;
+};
+
 export type ProductResult = {
   id: string;
   externalId: string;
@@ -40,6 +56,7 @@ export type ProductResult = {
   category?: string;
   description?: string;
   image?: string;
+  familyImage?: string;
   bestPrice: number;
   currency: string;
   dealScore: number;
@@ -47,6 +64,8 @@ export type ProductResult = {
   storesCount?: number;
   variants?: string[];
   variantOptions?: Record<string, string[]>;
+  catalogVariants?: CatalogVariantView[];
+  selectedVariantId?: string;
 };
 
 export type AiShoppingPlan = {
