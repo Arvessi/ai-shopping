@@ -9,9 +9,17 @@ const benchmarkQueries = [
   "Lenovo Legion 5",
 ];
 
-console.log(`CENIQ discovery benchmark: ${knownMerchantDomains().length} merchant domains`);
+const DEFAULT_MAX_QUERIES = 6;
+const requestedMax = Number.parseInt(process.env.MAX_DISCOVERY_QUERIES ?? String(DEFAULT_MAX_QUERIES), 10);
+const maxQueries = Number.isFinite(requestedMax)
+  ? Math.max(0, Math.min(requestedMax, DEFAULT_MAX_QUERIES))
+  : DEFAULT_MAX_QUERIES;
+const queriesToRun = benchmarkQueries.slice(0, maxQueries);
 
-for (const query of benchmarkQueries) {
+console.log(`CENIQ discovery benchmark: ${knownMerchantDomains().length} merchant domains`);
+console.log(`Credit safety: max ${queriesToRun.length} provider calls this run (hard ceiling ${DEFAULT_MAX_QUERIES})`);
+
+for (const query of queriesToRun) {
   try {
     const result = await discoverProductUrls(query, {
       knownMerchantsOnly: true,
