@@ -9,13 +9,13 @@ import {
 } from './dataforseo-client';
 
 const DEADLINE_MS = Math.min(
-  180_000,
-  Math.max(30_000, Number(process.env.ENRICHMENT_DEADLINE_MS || 90_000)),
+  300_000,
+  Math.max(60_000, Number(process.env.ENRICHMENT_DEADLINE_MS || 180_000)),
 );
 
 const MAX_ATTEMPTS = Math.min(
-  20,
-  Math.max(3, Number(process.env.ENRICHMENT_MAX_POLLS || 9)),
+  40,
+  Math.max(12, Number(process.env.ENRICHMENT_MAX_POLLS || 20)),
 );
 
 export async function queueEnrichment(query: string, familyId?: string) {
