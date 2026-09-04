@@ -69,19 +69,46 @@ export async function discoverShoppingLive(keyword: string) {
   return discoverShoppingLiveMany([keyword]);
 }
 
-export async function discoverShoppingLiveMany(keywords: string[]) {
-  const clean = Array.from(new Set(keywords.map((keyword) => keyword.trim()).filter(Boolean))).slice(0, 10);
+async function discoverShoppingLiveOne(keyword: string) {
   const json = await request('/serp/google/organic/live/advanced', {
     method: 'POST',
-    body: JSON.stringify(clean.map((keyword) => ({
+    body: JSON.stringify([{
       ...taskPayload(keyword)[0],
       device: 'desktop',
       os: 'windows',
       search_param: '&udm=28',
-    }))),
+    }]),
   });
-  json.__ceniqKeywords = clean;
-  return json;
+  return { keyword, json };
+}
+
+export async function discoverShoppingLiveMany(keywords: string[]) {
+  const clean = Array.from(new Set(keywords.map((keyword) => keyword.trim()).filter(Boolean))).slice(0, 8);
+
+  // Live SERP accepts exactly one task per HTTP request. Previously we sent many
+  // tasks in one payload, so cold searches silently failed while old DB rows still
+  // appeared. Run each query separately and merge the returned task arrays.
+  const settled = await Promise.allSettled(clean.map((keyword) => discoverShoppingLiveOne(keyword)));
+  const tasks: Json[] = [];
+  const failures: Array<{ keyword: string; error: string }> = [];
+
+  settled.forEach((result, index) => {
+    const keyword = clean[index];
+    if (result.status === 'rejected') {
+      failures.push({ keyword, error: result.reason instanceof Error ? result.reason.message : String(result.reason) });
+      return;
+    }
+
+    for (const task of result.value.json.tasks || []) {
+      tasks.push({ ...task, __ceniqKeyword: keyword });
+    }
+  });
+
+  if (!tasks.length && failures.length) {
+    throw new Error(`DataForSEO live discovery failed: ${failures.map((row) => `${row.keyword}: ${row.error}`).join(' | ')}`);
+  }
+
+  return { status_code: 20000, tasks, __ceniqKeywords: clean, __ceniqFailures: failures } as Json;
 }
 
 type ShoppingIdentity = { productId?: string; gid?: string; dataDocId?: string };
@@ -169,7 +196,7 @@ export function mapShoppingCandidates(json: Json): NormalizedOfferCandidate[] {
   const raw: RawShoppingItem[] = [];
   const rememberedKeywords = Array.isArray(json.__ceniqKeywords) ? json.__ceniqKeywords.map(String) : [];
   for (const [index, task] of (json.tasks || []).entries()) {
-    const keyword = String(task?.data?.keyword || task?.result?.[0]?.keyword || rememberedKeywords[index] || '');
+    const keyword = String(task?.__ceniqKeyword || task?.data?.keyword || task?.result?.[0]?.keyword || rememberedKeywords[index] || '');
     walkItems(task?.result || [], raw, keyword);
   }
 
