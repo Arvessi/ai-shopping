@@ -1,7 +1,7 @@
 import type { Prisma } from '@prisma/client';
-import { prisma } from '@/lib/db';
-import { LATVIA_ELECTRONICS_STORES } from '@/lib/store-registry';
-import type { CatalogVariantView, OfferView, ProductResult, VariantAttributes } from '@/lib/types';
+import { prisma } from '../db';
+import { LATVIA_ELECTRONICS_STORES } from '../store-registry';
+import type { CatalogVariantView, OfferView, ProductResult, VariantAttributes } from '../types';
 import {
   applyVariantOutlierValidation,
   chooseImage,
