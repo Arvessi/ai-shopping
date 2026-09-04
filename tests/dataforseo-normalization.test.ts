@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mapShoppingCandidates } from '../lib/canonical/dataforseo-client.ts';
+import { mapShoppingCandidates, shoppingTasksReadyIds } from '../lib/canonical/dataforseo-client.ts';
 import { merchantDomainAllowed, resolveCandidate } from '../lib/canonical/domain.ts';
 
 test('DataForSEO Merchant output emits the shared candidate contract without hiding price evidence', () => {
@@ -22,4 +22,21 @@ test('DataForSEO Merchant output emits the shared candidate contract without hid
   assert.equal(resolveCandidate(candidates[1]).priceKind, 'MONTHLY');
   assert.equal(resolveCandidate(candidates[1]).validationStatus, 'REJECTED');
   assert.equal(merchantDomainAllowed(candidates[0].merchant.domain, ['1a.lv']), true);
+});
+
+test('DataForSEO products tasks_ready exposes completed provider task IDs', () => {
+  const ids = shoppingTasksReadyIds({
+    status_code: 20000,
+    tasks: [{
+      status_code: 20000,
+      result: [
+        { id: 'ready-task-1', endpoint_advanced: '/v3/merchant/google/products/task_get/advanced/ready-task-1' },
+        { id: 'ready-task-2', endpoint_advanced: '/v3/merchant/google/products/task_get/advanced/ready-task-2' },
+      ],
+    }],
+  });
+
+  assert.equal(ids.has('ready-task-1'), true);
+  assert.equal(ids.has('ready-task-2'), true);
+  assert.equal(ids.has('missing-task'), false);
 });
