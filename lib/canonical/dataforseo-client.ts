@@ -80,9 +80,6 @@ export async function discoverShoppingLiveMany(keywords: string[]) {
       search_param: '&udm=28',
     }))),
   });
-
-  // Some DataForSEO responses do not echo task.data.keyword consistently. Preserve
-  // the exact query order so storage/RAM/model expansion can still be attributed.
   json.__ceniqKeywords = clean;
   return json;
 }
@@ -164,6 +161,10 @@ function fallbackModelIdentifier(title: string, attributes: Record<string, strin
   return { type: 'MODEL_ALIAS', value: normalized, source: 'ceniq-title', confidence: 0.72 };
 }
 
+function hasStrongIdentifier(items: IdentifierCandidate[]) {
+  return items.some((identifier) => ['GTIN', 'EAN', 'UPC', 'MPN', 'MODEL_ALIAS'].includes(identifier.type));
+}
+
 export function mapShoppingCandidates(json: Json): NormalizedOfferCandidate[] {
   const raw: RawShoppingItem[] = [];
   const rememberedKeywords = Array.isArray(json.__ceniqKeywords) ? json.__ceniqKeywords.map(String) : [];
@@ -203,7 +204,7 @@ export function mapShoppingCandidates(json: Json): NormalizedOfferCandidate[] {
 
     const itemIdentifiers = identifiers(item);
     const fallbackIdentifier = fallbackModelIdentifier(identity.title, attributes);
-    if (!itemIdentifiers.length && fallbackIdentifier) itemIdentifiers.push(fallbackIdentifier);
+    if (!hasStrongIdentifier(itemIdentifiers) && fallbackIdentifier) itemIdentifiers.push(fallbackIdentifier);
 
     output.push({
       source: 'dataforseo-google-shopping',
