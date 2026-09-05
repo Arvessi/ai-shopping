@@ -29,7 +29,7 @@ function matchVariant(offer:any,selected:Record<string,string>) {
   const data=offer.variantData||{};
   return Object.entries(selected).every(([key,value])=>!value||data[key]===value);
 }
-function currentSpecs(attributes:Record<string,string>|undefined) {
+function specRows(attributes:Record<string,string>|undefined) {
   if(!attributes) return [];
   return AXIS_ORDER
     .map(axis=>({axis,label:AXIS_LABELS[axis]||axis,value:attributes[axis]}))
@@ -73,11 +73,9 @@ export default function ProductDetail({id,variantId}:{id:string;variantId?:strin
 
   const variantOptions=useMemo(()=>{
     const map=new Map<string,Set<string>>();
-    const sources=catalogVariants.length
-      ? catalogVariants.map((variant:any)=>({variantData:variant.attributes}))
-      : allOffers;
-    for(const offer of sources) {
-      for(const [key,value] of Object.entries(offer.variantData||{})) {
+    const sources=catalogVariants.length?catalogVariants.map((variant:any)=>({variantData:variant.attributes})):allOffers;
+    for(const source of sources) {
+      for(const [key,value] of Object.entries(source.variantData||{})) {
         if(!value||(key==='condition'&&value==='New')) continue;
         if(!map.has(key)) map.set(key,new Set());
         map.get(key)!.add(String(value));
@@ -88,16 +86,13 @@ export default function ProductDetail({id,variantId}:{id:string;variantId?:strin
 
   useEffect(()=>{
     if(Object.keys(selected).length||!allOffers.length) return;
-    const canonicalDefault=catalogVariants.find((variant:any)=>variant.id===product?.selectedVariantId);
-    if(canonicalDefault) { setSelected(canonicalDefault.attributes||{}); return; }
+    const preferred=catalogVariants.find((variant:any)=>variant.id===product?.selectedVariantId);
+    if(preferred) { setSelected(preferred.attributes||{}); return; }
     const cheapest=[...allOffers].sort((a:any,b:any)=>a.totalPrice-b.totalPrice)[0];
     setSelected(cheapest?.variantData||{});
   },[allOffers,catalogVariants,product,selected]);
 
-  const selectedVariant=useMemo(
-    ()=>catalogVariants.find((variant:any)=>Object.entries(selected).every(([key,value])=>!value||variant.attributes?.[key]===value)),
-    [catalogVariants,selected],
-  );
+  const selectedVariant=useMemo(()=>catalogVariants.find((variant:any)=>Object.entries(selected).every(([key,value])=>!value||variant.attributes?.[key]===value)),[catalogVariants,selected]);
 
   function chooseVariantAxis(axis:string,option:string) {
     const requested={...selected,[axis]:option};
@@ -112,8 +107,9 @@ export default function ProductDetail({id,variantId}:{id:string;variantId?:strin
   }
 
   const filteredOffers=useMemo(()=>{
+    const attrs=selectedVariant?.attributes||selected;
     return allOffers
-      .filter((offer:any)=>selectedVariant?offer.variantId===selectedVariant.id:matchVariant(offer,selected))
+      .filter((offer:any)=>matchVariant(offer,attrs))
       .sort((a:any,b:any)=>{
         if(a.isBestOverall!==b.isBestOverall) return a.isBestOverall?-1:1;
         if(a.isCheapest!==b.isCheapest) return a.isCheapest?-1:1;
@@ -127,7 +123,7 @@ export default function ProductDetail({id,variantId}:{id:string;variantId?:strin
   const bestScore=storeCount>=2?Math.max(0,...filteredOffers.map((offer:any)=>Number(offer.dealScore||0))):0;
   const visibleOffers=showAll?filteredOffers:filteredOffers.slice(0,5);
   const selectedImage=selectedVariant?.image||filteredOffers.find((offer:any)=>Boolean(offer.image))?.image||product?.familyImage||product?.image||'';
-  const specs=currentSpecs(selectedVariant?.attributes||selected);
+  const specs=specRows(selectedVariant?.attributes||selected);
 
   async function runRefresh(force=false,silent=false) {
     if(refreshing||enriching) return;
@@ -157,7 +153,7 @@ export default function ProductDetail({id,variantId}:{id:string;variantId?:strin
         setVerdict(null);
         return;
       }
-      throw new Error('Veikalu meklÄ“Å¡ana aizÅ†Ä“mÃ a:dpu laiku.');
+      throw new Error('Veikalu meklÄ“Å¡ana aizÅ†Ä“ma pÄrÄk ilgu laiku.');
     } catch(e) {
       if(!silent) setError(e instanceof Error?e.message:'NeizdevÄs atjaunot.');
     } finally {
@@ -178,45 +174,98 @@ export default function ProductDetail({id,variantId}:{id:string;variantId?:strin
   },[product,totalStoreCount]);
 
   async function wishlist() {
-    const response=await fetch('/api/wishlist',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify˜[Z[RYœ›ÙXİšY˜\šX[YœÙ[XİY˜\šX[ËšYJKˆJNÂˆYŠ™\ÜÛœÙKœİ]\ÏOOMJHÈÚ[™İË›ØØ][Û‹š™YIËÛÙÚ[‰ÎÈ™]\›ÈBˆYŠ™\ÜÛœÙK›ÚÊHÙ]Ø]™Y
-YJNÂˆB‚ˆ\Ş[˜È[˜İ[ÛˆÜ™X]P[\
+    const response=await fetch('/api/wishlist',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({familyId:product.id,variantId:selectedVariant?.id})});
+    if(response.status===401) { window.location.href='/login'; return; }
+    if(response.ok) setSaved(true);
+  }
 
-HÂˆÙ][\\ÙÊ	ÉÊNÂˆÛÛœİ™\ÜÛœÙOX]ØZ]™]Ú
-	ËØ\KØ[\ÉËÂˆY]Ù‰ÔÔÕ	ËXY\œÎÉĞÛÛ[U\IÎ‰Ø\XØ][Û‹ÚœÛÛ‰ßKˆ›ÙN’”ÓÓ‹œİš[™ÚYJÙ˜[Z[RYœ›ÙXİšY˜\šX[YœÙ[XİY˜\šX[ËšY\™Ù]šXÙN“[X™\Š\™Ù]
-K[XZ[[˜X›YYKœ›İÜÙ\‘[˜X›YY_JKˆJNÂˆÛÛœİ]OX]ØZ]™\ÜÛœÙKšœÛÛŠ
-NÂˆYŠ™\ÜÛœÙKœİ]\ÏOOMJHÈÚ[™İË›ØØ][Û‹š™YIËÛÙÚ[‰ÎÈ™]\›ÈBˆÙ][\\ÙÊ™\ÜÛœÙK›ÚÏÉĞœ±*Ù[± Z[\È^™ZYİÈ8§$Î™]K™\œ›ÜŸ	Ó™Z^™]± \È^™ZYİœ±*Ù[± Z[]K‰ÊNÂˆB‚ˆ\Ş[˜È[˜İ[ÛˆÙ]™\™Xİ
+  async function createAlert() {
+    setAlertMsg('');
+    const response=await fetch('/api/alerts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({familyId:product.id,variantId:selectedVariant?.id,targetPrice:Number(target),emailEnabled:true,browserEnabled:true})});
+    const data=await response.json();
+    if(response.status===401) { window.location.href='/login'; return; }
+    setAlertMsg(response.ok?'BrÄ«dinÄjums izveidots âœ“':data.error||'NeizdevÄs izveidot brÄ«dinÄjumu.');
+  }
 
-HÂˆYŠ™\™XİØY[™ÊH™]\›ÂˆÙ]™\™XİØY[™ÊYJNÂˆÙ]™\™Xİ\œ›ÜŠ	ÉÊNÂˆHÂˆÛÛœİ™\ÜÛœÙOX]ØZ]™]Ú
-Ø\KÜ›ÙXİËÉÙ[˜ÛÙUT’PÛÛ\Û™[
-Y
-_Kİ™\™Xİ	ÜÙ[XİY˜\šX[ËšYØİ˜\šX[YIÙ[˜ÛÙUT’PÛÛ\Û™[
-Ù[XİY˜\šX[šY
-_X‰ÉßXÛY]Ù‰ÔÔÕ	ßJNÂˆÛÛœİ]OX]ØZ]™\ÜÛœÙKšœÛÛŠ
-NÂˆYŠ\™\ÜÛœÙK›ÚÊH›İÈ™]È\œ›ÜŠ]K™\œ›ÜŸ	ĞÑS’TH[˜[1*Ş™H™Z^™]± \Ë‰ÊNÂˆÙ]™\™Xİ
-]K™\™Xİ
-NÂˆÙ]™\™Xİ›İšY\Š]Kœ›İšY\Ÿ	ÉÊNÂˆHØ]Ú
-JHÂˆÙ]™\™Xİ\œ›ÜŠH[œİ[˜Ù[Ùˆ\œ›ÜÙK›Y\ÜØYÙN‰ĞÑS’TH[˜[0êŞ™H™Z^™]± \Ë‰ÊNÂˆHš[˜[HÂˆÙ]™\™XİØY[™Ê˜[ÙJNÂˆBˆB‚ˆYŠ\œ›Ü‰‰ˆ\›ÙXİ
-H™]\›ˆ]ˆÛ\ÜÓ˜[YOH˜ÛÛZ[™\ˆÎK\İ[™[Û™H]ˆÛ\ÜÓ˜[YOH™\œ›Ü˜›ŞÙ\œ›ÜŸOÙ]Ù]ÂˆYŠ\›ÙXİ
-H™]\›ˆ]ˆÛ\ÜÓ˜[YOH˜ÛÛZ[™\ˆÎK\İ[™[Û™H]ˆÛ\ÜÓ˜[YOH˜ÎK[ØY\ˆ’Y[1 Y1$ÈpèOÙ]Ù]Â‚ˆ™]\›ˆ
-ˆ]ˆÛ\ÜÓ˜[YOH˜ÛÛZ[™\ˆÎKY]Z[‚ˆHÛ\ÜÓ˜[YOH˜ÎKX˜XÚÈˆ™YH‹È¸¡¤]ZØq/^ˆYZÛ1$ñhX[OØO‚‚ˆÙXİ[ÛˆÛ\ÜÓ˜[YOH˜ÎKY]Z[Z\›È‚ˆ]ˆÛ\ÜÓ˜[YOH˜ÎKY]Z[[YYXH‚ˆÜÙ[XİY[XYÙBˆÈ[YÈÜ˜Ï^ÜÙ[XİY[XYÙ_H[^Ü›ÙXİ]_KÏ‚ˆˆ]ˆÛ\ÜÓ˜[YOH˜ÎKY˜[˜XÚÈÏØÜ[˜]1$ÛÈYZÈ\[[± ]ÏÜÜ[Ù]ŸBˆÙ]‚‚ˆ]ˆÛ\ÜÓ˜[YOH˜ÎKY]Z[XÛÜH‚ˆ]ˆÛ\ÜÓ˜[YOH˜ÎKZÚXÚÙ\œÈ‚ˆÜ[ˆÛ\ÜÓ˜[YOH˜ÎKXœ˜[™Ü›ÙXİ˜œ˜[™	ĞÑS’TH›ÙZİÉßOÜÜ[‚ˆØ™\İØÛÜ™OŒ	‰Ü[ˆÛ\ÜÓ˜[YOH˜ÎK\ØÛÜ™HÑS’THØ™\İØÛÜ™_KÌLÜÜ[ŸBˆÜ[İİ[İÜ™PÛİ[Hİİ[İÜ™PÛİ[OOLOÉİ™ZZØ[ÉÎ‰İ™ZZØ[IßHØ][Ùñ OÜÜ[‚ˆÙ]‚ˆOÜ›ÙXİ]_OÚO‚‚ˆÜÜXÜË›[™İŒ	‰Šˆ]ˆÛ\ÜÓ˜[YOH˜ÎK\ÜXÜÈÎKY]Z[\ÜXÜÈ‚ˆÜÜXÜË›X\
-][OOÜ[ˆÙ^O^Ø	Ôİš[™Ê][K˜^\Ê_KIÚ][K˜[Y_XOÛX[Ú][K›X™[OÜÛX[Ú][K˜[Y_OØÜÜ[Š_BˆÙ]‚ˆ
-_B‚ˆÓØš™XİšÙ^\Ê˜\šX[Ü[ÛœÊK›[™İŒ	‰Šˆ]ˆÛ\ÜÓ˜[YOH˜ÎKY]Z[]˜\šX[È‚ˆĞVT×ÓÔ‘T‹›X\
-^\ÏOÂˆÛÛœİÜ[ÛœÏ]˜\šX[Ü[ÛœÖØ^\×_×NÂˆYŠÜ[ÛœË›[™İLJH™]\›ˆ[Âˆ™]\›ˆ
-ˆ]ˆÛ\ÜÓ˜[YOH˜ÎKX^\ÈˆÙ^O^Ø^\ßO‚ˆÜ[ĞVT×ÓP‘SÖØ^\×_OÜÜ[‚ˆ]ÛÜ[ÛœË›X\
+  async function getVerdict() {
+    if(verdictLoading) return;
+    setVerdictLoading(true); setVerdictError('');
+    try {
+      const response=await fetch(`/api/products/${encodeURIComponent(id)}/verdict${selectedVariant?.id?`?variantId=${encodeURIComponent(selectedVariant.id)}`:''}`,{method:'POST'});
+      const data=await response.json();
+      if(!response.ok) throw new Error(data.error||'CENIQ analÄ«ze neizdevÄs.');
+      setVerdict(data.verdict); setVerdictProvider(data.provider||'');
+    } catch(e) {
+      setVerdictError(e instanceof Error?e.message:'CENIQ analÄ«ze neizdevÄs.');
+    } finally { setVerdictLoading(false); }
+  }
 
-Ü[ÛŠOO‚ˆ]Û‚ˆÙ^O^ÛÜ[ÛŸBˆÛ\ÜÓ˜[YO^ÜÙ[XİYØ^\×OOO[Ü[ÛÉØXİ]™IÎ‰ÉßBˆ\ØX›Y^Ğ›ÛÛX[ŠØ][ÙÕ˜\šX[Ë›[™İ
-I‰ˆXØ][ÙÕ˜\šX[ËœÛÛYJ
-˜\šX[˜[JOO‚ˆ˜\šX[˜]šX]\ÏË–Ø^\×OOO[Ü[Û‰‰“Øš™Xİ™[šY\ÊÙ[XİY
-K™]™\J
-ÚÙ^K˜[YWJOOšÙ^OOOX^\ß]˜[Y_˜\šX[˜]šX]\ÏË–ÚÙ^WOOO]˜[YJBˆ
-_BˆÛÛXÚÏ^Ê
-OO˜ÚÛÜÙU˜\šX[^\Ê^\ËÜ[ÛŠ_BˆÛÜ[ÛŸOØ]Û‚ˆ
-_OÙ]‚ˆÙ]‚ˆ
-NÂˆJ_BˆÙ]‚ˆ
-_B‚ˆÙ[œšXÚ[™É‰]ˆÛ\ÜÓ˜[YOH˜ÎKY[œšXÚKÏÑS’TH›Û± H1 \˜˜]YH±$Û™ZZØ[\È[ˆ]1$Û\ø )Ù]ŸB‚ˆ]ˆÛ\ÜÓ˜[YOH˜ÎKY]Z[XXİ[ÛœÈ‚ˆ]ÛˆÛÛXÚÏ^İÚ\Ú\İOÜØ]™YÉø¦iHØYÛX± ]ÉÎ‰ø¦hHØYÛX± ]	ßOØ]Û‚ˆ]ÛˆÛ\ÜÓ˜[YOHœÙXÛÛ™\HˆÛÛXÚÏ^Ê
-OOœ[”™Yœ™\Ú
-YK˜[ÙJ_H\ØX›Y^Ü™Yœ™\Ú[™ßO‚ˆÜ™Yœ™\Ú[™ÏÉÓYZÛ1$ø )‰Îİ[İÜ™PÛİ[ÏÉĞ]˜\İ˜Z\± ZÂfV–¶ÇRs¢tF¦Væ÷B6Væ2wĞ¢Âö'WGFöãà¢ÂöF—cà¢ÂöF—cà ¢Æ6–FR6Æ74æÖSÒ&3’ÖFWF–Â×7VÖÖ'’#à¢Ç7ãäÆ,H¼H·G\HÌH6VæÂ÷7ãà¢Ç7G&öæsç¶&W7CöÖöæW’†&W7BçF÷FÅ&–6RÆ&W7Bæ7W'&Væ7’“¢~(	BwÓÂ÷7G&öæsà¢Ç6ÖÆÃç·7F÷&T6÷VçGÒ·7F÷&T6÷VçCÓÓÓòwfV–¶Ç2s¢wfV–¶Æ’wÒZ–Òf&–çFÓÂ÷6ÖÆÃà¢¶&W7BbcÆVÓç¶&W7BæÖW&6†çGÓÂöVÓçĞ¢ÆF—b6Æ74æÖSÒ&3’×66÷&R×æVÂ#à¢Ç7ãä4Tä•66÷&SÂ÷7ãà¢Æ#ç¶&W7E66÷&Sãö&W7E66÷&S¢~(	BwÓÂö#à¢Ç6ÖÆÃç¶&W7E66÷&Sãòrós¢wf¦rf—6Ö¢"fV–¶ÇW2wÓÂ÷6ÖÆÃà¢ÂöF—cà¢Âö6–FSà¢Â÷6V7F–öãà ¢¶W'&÷"bcÆF—b6Æ74æÖSÒ&W'&÷&&÷‚3’ÖFWF–ÂÖW'&÷"#ç¶W'&÷'ÓÂöF—cçĞ ¢Ç6V7F–öâ6Æ74æÖSÒ&3’ÖFWF–Â×6V7F–öâ#à¢ÆF—b6Æ74æÖSÒ&3’×6V7F–öâÖ†VB#à¢ÆF—cãÇ7ãådT”´ÅR”TLHlH¥TÔ“Â÷7ããÆƒ#ä·W"—&·BZòf&–çGSÂöƒ#ãÂöF—cà¢Çç¶f–ÇFW&VDöffW'2æÆVæwF‡Ò¶f–ÇFW&VDöffW'2æÆVæwFƒÓÓÓòw–VLHlH§V×2s¢w–VLHlH§VÖ’wÓÂ÷à¢ÂöF—cà ¢ÆF—b6Æ74æÖSÒ&3’ÖFWF–ÂÖöffW'2#à¢·f—6–&ÆTöffW'2æÆVæwFƒ÷f—6–&ÆTöffW'2æÖ‚†öffW#¦ç’Æ–æFWƒ¦çVÖ&W"“Óç°¢6öç7B—4&W7C×7F÷&T6÷VçCãÓ"bb†&W7Còæ–CööffW"æ–CÓÓÖ&W7Bæ–C¦–æFWƒÓÓÓ“°¢&WGW&â€¢Æ'F–6ÆR6Æ74æÖS×¶3’ÖFWF–ÂÖöffW"G¶—4&W7Còv—2Ö&W7Bs¢rwÖÒ¶W“×¶öffW"æ–GÇÆG¶ÖW&6†çD¶W’†öffW"—ÒÒG¶öffW"çF÷FÅ&–6WÒÒG¶–æFW‡ÖÓà¢ÆF—b6Æ74æÖSÒ&3’ÖöffW"×&æ²#ç¶—4&W7Cò~)ˆRs¥7G&–ær†–æFW‚³’çE7F'Bƒ"Âsr—ÓÂöF—cà¢ÆF—b6Æ74æÖSÒ&3’ÖöffW"×7F÷&R#à¢Æ#ç¶öffW"æÖW&6†çGÓÂö#à¢Ç6ÖÆÃç¶—4&W7Còt4Tä•—§lI6ÆRs¦öffW"æÖW&6†çDFöÖ–çÇÆöffW"çf&–çDÆ&VÇÇÂuH&&VLJ·G2–VLHlH§V×2wÓÂ÷6ÖÆÃà¢ÂöF—cà¢ÆF—b6Æ74æÖSÒ&3’ÖöffW"×7Fö6²#ç¶öffW"æFVÆ—fW'”ÖW76vWÇÂu–VV¦ÜJ¶'RH&&VLJ·BfV–¶ÌHwÓÂöF—cà¢ÆF—b6Æ74æÖSÒ&3’ÖöffW"×&–6R#à¢Æ#ç¶ÖöæW’†öffW"çF÷FÅ&–6RÆöffW"æ7W'&Væ7’—ÓÂö#à¢Ç6ÖÆÃç¶öffW"æFVÅ66÷&Sãbg7F÷&T6÷VçCãÓ#ö66÷&RG¶öffW"æFVÅ66÷&WÒó¢v¶÷I6¬H6VæwÓÂ÷6ÖÆÃà¢ÂöF—cà¢Æ‡&Vc×¶öffW"æ–Cöö’ö÷WCööffW$–CÒG¶Væ6öFUU$”6ö×öæVçB†öffW"æ–B—Ö¢†öffW"çW&ÇÇÂr2r—ÒF&vWCÒ%ö&Ææ²"&VÃÒ&æöföÆÆ÷r7öç6÷&VBæö÷VæW"#åW¢fV–¶ÇR(isÂöà¢Âö'F–6ÆSà¢“°¢Ò“£ÆF—b6Æ74æÖSÒ&3’ÖV×G’#ìZ’f&–çGR¶öÖ&–ìH6–¦’–VLHlH§V×2æbG&7G2ãÂöF—cçĞ¢ÂöF—cà ¢¶f–ÇFW&VDöffW'2æÆVæwFƒãRbb€¢Æ'WGFöâ6Æ74æÖSÒ&3’ÖÖ÷&R"öä6Æ–6³×²‚“Óç6WE6†÷tÆÂ‡fÇVSÓâfÇVR—Óà¢·6†÷tÆÃòu,HLJ·BÖ¬H²s¦,HLJ·Bf—7W2G¶f–ÇFW&VDöffW'2æÆVæwF‡Ò–VLHlH§V×W6Ğ¢Âö'WGFöãà¢—Ğ¢Â÷6V7F–öãà ¢Ç6V7F–öâ6Æ74æÖSÒ&3’ÖFWF–ÂÖw&–B#à¢ÆF—b6Æ74æÖSÒ&3’ÖFWF–Â×6V7F–öâ3’×fW&F–7B#à¢ÆF—b6Æ74æÖSÒ&3’×6V7F–öâÖ†VB#à¢ÆF—cãÇ7ãä4Tä•dU$D”5CÂ÷7ããÆƒ#ç·fW&F–7C÷fW&F–7BçfW&F–7C¢t¶ò6¶FF“òwÓÂöƒ#ãÂöF—cà¢·fW&F–7BbcÇç·fW&F–7Bæ6öæf–FVæ6WÒH&Æ–V<J¶&Â÷çĞ¢ÂöF—cà¢·fW&F–7Cò€¢Ãà¢Çç·fW&F–7Bç7VÖÖ'—ÓÂ÷à¢ÇVÃç·fW&F–7Bç&V6öç2æÖ‡&V6öãÓãÆÆ’¶W“×·&V6öçÓç·&V6öçÓÂöÆ“â—ÓÂ÷VÃà¢Ç6ÖÆÃç·fW&F–7E&÷f–FW#ÓÓÒvvVÖ–æ’sòt“¢vVÖ–æ’s¢t4Tä•æ÷FV–·V×RæÌJ·¦RwÓÂ÷6ÖÆÃà¢Âóà¢“¢€¢Ãà¢Çå6ÌJ¶G¦–æ’6VçRÂfV–¶ÇR6¶—GRVâ–VLHlH§VÖ·fÆ—LHF’f–VìHJ·<H6V6–ìH§VÜHãÂ÷à¢Æ'WGFöâöä6Æ–6³×¶vWEfW&F–7GÒF—6&ÆVC×·fW&F–7DÆöF–æwÓç·fW&F–7DÆöF–æsòtæÆ—¬I>(
-bs¢u6XfV×B4Tä•f–VFö¶Æ’wÓÂö'WGFöãà¢Âóà¢—Ğ¢·fW&F–7DW'&÷"bcÇ6ÖÆÂ6Æ74æÖSÒ&3’×fW&F–7BÖW'&÷"#ç·fW&F–7DW'&÷'ÓÂ÷6ÖÆÃçĞ¢ÂöF—cà ¢ÆF—b6Æ74æÖSÒ&3’ÖFWF–Â×6V7F–öâ3’ÖÆW'B#à¢ÆF—b6Æ74æÖSÒ&3’×6V7F–öâÖ†VB#ãÆF—cãÇ7ãä4TåR%,J¤D”ìH¥TÕ3Â÷7ããÆƒ#å6¶’6gR6VçRãÂöƒ#ãÂöF—cãÂöF—cà¢ÆÆ&VÃäÜI7,Kv6Væ(*Â¢Æ–çWBG—SÒ&çVÖ&W""Ö–ãÒ#"7FWÒ#ã"fÇVS×·F&vWGÒöä6†ævS×²†S¤6†ævTWfVçCÄ…DÔÄ–çWDVÆVÖVçCâ“Óç6WEF&vWB†RçF&vWBçfÇVR—Òóà¢ÂöÆ&VÃà¢Æ'WGFöâöä6Æ–6³×¶7&VFTÆW'GÓä—§fV–F÷B',J¶F–ìH§V×SÂö'WGFöãà¢¶ÆW'D×6rbcÇ6ÖÆÃç¶ÆW'D×6wÓÂ÷6ÖÆÃçĞ¢ÂöF—cà¢Â÷6V7F–öãà ¢Ç6V7F–öâ6Æ74æÖSÒ&3’ÖFWF–Â×6V7F–öâ#à¢ÆF—b6Æ74æÖSÒ&3’×6V7F–öâÖ†VB#ãÆF—cãÇ7ãålI%5EU$SÂ÷7ããÆƒ#ä6Væ2F–æÖ–¶Âöƒ#ãÂöF—cãÂöF—cà¢Å&–6T6†'Bö–çG3×·&öGV7Bç6æ6†÷G7Ò7W'&Væ7“×·&öGV7Bæ7W'&Væ7—Òóà¢Â÷6V7F–öãà¢ÂöF—cà¢“°§Ğ
+  if(error&&!product) return <div className="container standalone"><div className="errorbox">{error}</div></div>;
+  if(!product) return <div className="container standalone"><div className="loaderline">IelÄdÄ“ produktuâ€¦</div></div>;
+
+  return <div className="container productpage">
+    <a className="backlink" href="/">â† AtpakaÄ¼ uz meklÄ“Å¡anu</a>
+
+    <section className="producthero">
+      <div className="detailimage">
+        {selectedImage?<img src={selectedImage} alt={product.title}/>:<div className="imagefallback imagefallback-soft"><span>C</span><small>Nav produkta attÄ“la</small></div>}
+      </div>
+
+      <div className="detailcopy">
+        <div className="eyebrow">{product.brand||'CENIQ produkts'}</div>
+        <h1>{product.title}</h1>
+
+        {Object.keys(variantOptions).length>0&&<div className="variantpicker">
+          {AXIS_ORDER.map(axis=>{
+            const options=variantOptions[axis]||[];
+            if(options.length<=1) return null;
+            return <div className="variantaxis" key={axis}>
+              <span>{AXIS_LABELS[axis]}</span>
+              <div className="variantbuttons">{options.map(option=><button key={option} className={selected[axis]===option?'active':''} disabled={Boolean(catalogVariants.length)&&!catalogVariants.some((variant:any)=>variant.attributes?.[axis]===option&&Object.entries(selected).every(([key,value])=>key===axis||!value||variant.attributes?.[key]===value))} onClick={()=>chooseVariantAxis(axis,option)}>{option}</button>)}</div>
+            </div>;
+          })}
+        </div>}
+
+        {specs.length>0&&<div className="specstrip">{specs.map(spec=><div key={spec.axis}><span>{spec.label}</span><b>{spec.value}</b></div>)}</div>}
+
+        <div className="productfacts">
+          <div><span>LabÄkÄ cena</span><strong>{best?money(best.totalPrice,best.currency):'â€”'}</strong></div>
+          <div><span>Veikali</span><strong>{storeCount||'â€”'}</strong></div>
+          <div><span>CENIQ score</span><strong>{bestScore>0?`${bestScore}/100`:'VÄ“l nav'}</strong></div>
+        </div>
+
+        {enriching&&<div className="enrichstatus"><i/>CENIQ fonÄ meklÄ“ vÄ“l veikalusâ€¦</div>}
+
+        <div className="detailactions">
+          <button className="primary" onClick={wishlist}>{saved?'â™¥ SaglabÄts':'â™¡ SaglabÄt'}</button>
+          <button className="secondary" onClick={()=>runRefresh(true,false)} disabled={refreshing}>{refreshing?'MeklÄ“â€¦':totalStoreCount<3?'âŒ• Atrast vairÄk veikalu':'â†» Atjaunot cenas'}</button>
+        </div>
+
+        <div className="aiverdict">
+          <div className="aiverdicthead"><div><span>âœ¦ CENIQ VERDICT</span><h3>{verdict?verdict.verdict:'Ko CENIQ domÄ par Å¡o cenu?'}</h3></div>{verdict&&<small>{verdict.confidence} pÄrliecÄ«ba</small>}</div>
+          {verdict?<><p>{verdict.summary}</p><ul>{verdict.reasons.map(reason=><li key={reason}>{reason}</li>)}</ul><small className="verdictprovider">{verdictProvider==='gemini'?'AI: Gemini':'CENIQ noteikumu analÄ«ze'}</small></>:<><p>Ä€trs vÄ“rtÄ“jums par cenu, veikalu skaitu un piedÄvÄjuma kvalitÄti.</p><button className="primary" onClick={getVerdict} disabled={verdictLoading}>{verdictLoading?'AnalizÄ“â€¦':'SaÅ†emt CENIQ viedokli'}</button></>}
+          {verdictError&&<small className="verdictError">{verdictError}</small>}
+        </div>
+      </div>
+    </section>
+
+    {error&&<div className="errorbox">{error}</div>}
+
+    <section className="detailsection offersection-v21">
+      <div className="sectiontitle"><div><span>VEIKALU PIEDÄ€VÄ€JUMI</span><h2>{storeCount>=3?'LabÄkie piedÄvÄjumi':storeCount===2?'2 veikali Å¡im variantam':storeCount===1?'1 veikals Å¡im variantam':'PiedÄvÄjumi nav atrasti'}</h2></div><p>{filteredOffers.length} {filteredOffers.length===1?'piedÄvÄjums':'piedÄvÄjumi'}</p></div>
+      {visibleOffers.length?<div className="topoffergrid topoffergrid-v21">{visibleOffers.map((offer:any,index:number)=><article className={`topoffer ${index===0&&storeCount>=2?'topoffer-best':''}`} key={offer.id||`${merchantKey(offer)}-${index}`}>
+        <div className="topofferindex">{String(index+1).padStart(2,'0')}</div>
+        <div className="topoffermerchant"><span>{index===0&&storeCount>=2?'CENIQ IZVÄ’LE':'PIEDÄ€VÄ€JUMS'}</span><h3>{offer.merchant}</h3>{offer.variantLabel&&<small>{offer.variantLabel}</small>}</div>
+        <div className="topofferprice"><span>KopÄ“jÄ cena</span><strong>{money(offer.totalPrice,offer.currency)}</strong><small>{offer.deliveryMessage||'PieejamÄ«bu pÄrbaudÄ«t veikalÄ'}</small></div>
+        {offer.dealScore>0&&storeCount>=2&&<div className="offerscore"><b>{offer.dealScore}</b><span>/100</span></div>}
+        <a className="offercta" href={`/api/out?offerId=${encodeURIComponent(offer.id)}`} target="_blank" rel="nofollow sponsored noopener">Uz veikalu â†—</a>
+      </article>)}</div>:<div className="filterempty">Å ai variantu kombinÄcijai piedÄvÄjums nav atrasts.</div>}
+      {filteredOffers.length>5&&<button className="showalloffers" onClick={()=>setShowAll(value=>!value)}>{showAll?'RÄdÄ«t mazÄk':`RÄdÄ«t visus ${filteredOffers.length} piedÄvÄjumus`}</button>}
+    </section>
+
+    <section className="twocol">
+      <div className="detailsection"><div className="sectiontitle"><div><span>VÄ’STURE</span><h2>Cenas dinamika</h2></div></div><PriceChart points={product.snapshots} currency={product.currency}/></div>
+      <div className="detailsection alertbox"><span className="eyebrow">CENU BRÄªDINÄ€JUMS</span><h2>Pasaki savu cenu.</h2><label>MÄ“rÄ·a cena (â‚¬)<input type="number" min="1" step="0.01" value={target} onChange={(e:ChangeEvent<HTMLInputElement>)=>setTarget(e.target.value)}/></label><button className="primary" onClick={createAlert}>ğŸ”” Izveidot</button>{alertMsg&&<small>{alertMsg}</small>}</div>
+    </section>
+  </div>;
+}
