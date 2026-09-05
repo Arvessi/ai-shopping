@@ -53,7 +53,11 @@ export function knownMerchantDomains(): string[] {
 }
 
 function normalizeDomainList(values?: string[]) {
-  return [...new Set((values || []).map(hostname).filter(Boolean))];
+  return [...new Set((values || []).map((value) => {
+    const trimmed = String(value || "").trim();
+    if (!trimmed) return "";
+    return hostname(trimmed) || hostname(`https://${trimmed}`);
+  }).filter(Boolean))];
 }
 
 export function resolveDiscoveryDomains(options: DiscoveryOptions = {}) {
