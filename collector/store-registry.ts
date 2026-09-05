@@ -25,7 +25,18 @@ const overrides: Record<string, StoreOverride> = {
     ],
   },
   tet: {
-    catalogUrls: ["https://www.tet.lv/veikals"],
+    catalogUrls: [
+      "https://www.tet.lv/veikals/telefoni/apple.html",
+      "https://www.tet.lv/veikals",
+    ],
+    productUrlHints: ["/veikals/"],
+  },
+  evelatus: {
+    catalogUrls: [
+      "https://evelatus.lv/veikals/",
+      "https://evelatus.lv/produkta-kategorija/telefoni/",
+    ],
+    productUrlHints: ["/produkts/", "/product/"],
   },
   lmt: {
     catalogUrls: ["https://www.lmt.lv/veikals/visi-telefoni"],
@@ -35,7 +46,10 @@ const overrides: Record<string, StoreOverride> = {
   },
 };
 
-export const coreCollectorStoreSlugs = ["euronics", "m79", "bite", "lmt", "tele2", "rd"] as const;
+// "core" is the proven/default sweep used by bootstrap and coverage. Tet and
+// Evelatus are included because both expose public product/catalog pages and can
+// materially improve phone/electronics merchant overlap.
+export const coreCollectorStoreSlugs = ["euronics", "m79", "bite", "lmt", "tele2", "tet", "evelatus", "rd"] as const;
 
 export const collectorStores: CollectorStore[] = LATVIA_ELECTRONICS_STORES.map((seed) => {
   const override = overrides[seed.slug] || {};
