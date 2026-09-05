@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/db';
-import { enrichmentLimitState, normalizeText } from './domain';
+import { enrichmentLimitState, normalizeText } from './domain.ts';
 import { ingestCandidates, searchCanonicalCatalog } from './catalog';
 import {
   createShoppingTask,

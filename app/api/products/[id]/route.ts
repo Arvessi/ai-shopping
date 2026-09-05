@@ -1,7 +1,9 @@
+import { sameProduct } from '@/collector/relevance';
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getCanonicalProduct, searchCanonicalCatalog } from '@/lib/canonical/catalog';
 import { shapeCanonicalResults } from '@/lib/canonical/result-shaping';
+import { reconcileStrongFamilies } from '@/lib/canonical/reconcile-results';
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
@@ -9,15 +11,9 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     const preferredVariantId = new URL(request.url).searchParams.get('variantId') || undefined;
     const canonical = await getCanonicalProduct(id, preferredVariantId);
     if (canonical) {
-      // A product page must show one stable family even if older ingest runs left
-      // sibling families in the DB. Re-read siblings by canonical title and merge
-      // offers/variants for presentation, while keeping real variant ids.
       const siblings = await searchCanonicalCatalog(canonical.title);
-      const shaped = shapeCanonicalResults(
-        siblings.length ? siblings : [canonical],
-        canonical.title,
-        preferredVariantId,
-      );
+      const reconciled = reconcileStrongFamilies([canonical, ...siblings.filter(p=>p.id!==canonical.id && sameProduct(p.title,canonical.title))]);
+      const shaped = shapeCanonicalResults(reconciled, canonical.title, preferredVariantId);
       const product = shaped[0] || canonical;
       const selectedVariantId = product.selectedVariantId!;
       const [observations, job] = await Promise.all([

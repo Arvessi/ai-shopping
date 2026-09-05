@@ -73,4 +73,5 @@ export type AiShoppingPlan = {
   summary: string;
   constraints: string[];
   category: string;
+  maxPrice?: number;
 };

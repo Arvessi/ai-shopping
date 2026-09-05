@@ -1,6 +1,14 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "git": {
+    "deploymentEnabled": {
+      "rebuild-v2": true
+    }
+  },
   "crons": [
     { "path": "/api/cron/alerts", "schedule": "15 6 * * *" },
-    { "path": "/api/cron/enrichment", "schedule": "23 3 * * *" }
+    { "path": "/api/cron/enrichment", "schedule": "23 3 * * *" },
+    { "path": "/api/cron/catalog-batch?stores=core&limit=40&concurrency=3", "schedule": "47 2 * * *" },
+    { "path": "/api/cron/catalog-batch?stores=rotation&storeLimit=6&limit=24&concurrency=3", "schedule": "17 4 * * *" }
   ]
 }

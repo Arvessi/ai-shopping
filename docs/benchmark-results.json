@@ -1,0 +1,172 @@
+{
+  "base": "http://127.0.0.1:3000",
+  "checkedAt": "2026-09-05T19:12:14.915Z",
+  "search": [
+    {
+      "query": "Samsung Galaxy S25",
+      "status": 503,
+      "results": [],
+      "error": "CENIQ katalogam nav konfigurēta datubāze."
+    },
+    {
+      "query": "iPhone 16",
+      "status": 503,
+      "results": [],
+      "error": "CENIQ katalogam nav konfigurēta datubāze."
+    },
+    {
+      "query": "Honor 400 Lite",
+      "status": 503,
+      "results": [],
+      "error": "CENIQ katalogam nav konfigurēta datubāze."
+    },
+    {
+      "query": "Sony WH-1000XM5",
+      "status": 503,
+      "results": [],
+      "error": "CENIQ katalogam nav konfigurēta datubāze."
+    },
+    {
+      "query": "Lenovo Legion 5",
+      "status": 503,
+      "results": [],
+      "error": "CENIQ katalogam nav konfigurēta datubāze."
+    },
+    {
+      "query": "LG OLED C4",
+      "status": 503,
+      "results": [],
+      "error": "CENIQ katalogam nav konfigurēta datubāze."
+    },
+    {
+      "query": "Canon EOS R50",
+      "status": 503,
+      "results": [],
+      "error": "CENIQ katalogam nav konfigurēta datubāze."
+    },
+    {
+      "query": "Epson EcoTank L3250",
+      "status": 503,
+      "results": [],
+      "error": "CENIQ katalogam nav konfigurēta datubāze."
+    },
+    {
+      "query": "MacBook Air M3 16GB 512GB",
+      "status": 503,
+      "results": [],
+      "error": "CENIQ katalogam nav konfigurēta datubāze."
+    }
+  ],
+  "ai": [
+    {
+      "prompt": "telefons līdz 600 € ar labu kameru",
+      "status": 503,
+      "plan": {
+        "searchQuery": "smartphone",
+        "category": "smartphone",
+        "maxPrice": 600,
+        "requiredSpecs": {},
+        "useCases": [
+          "Kameras kvalitāte"
+        ],
+        "comparisonTargets": [],
+        "constraints": [
+          "Līdz 600 €",
+          "Kameras kvalitāte"
+        ],
+        "summary": "Atlase pēc tava budžeta un zināmajām specifikācijām. Trūkstošos datus norādām atsevišķi."
+      },
+      "recommendations": 0,
+      "error": "CENIQ katalogam nav konfigurēta datubāze."
+    },
+    {
+      "prompt": "gaming laptop līdz 1200 € ar vismaz 16GB RAM",
+      "status": 503,
+      "plan": {
+        "searchQuery": "laptop",
+        "category": "laptop",
+        "maxPrice": 1200,
+        "requiredSpecs": {
+          "ram": "16 GB"
+        },
+        "useCases": [
+          "Spēles"
+        ],
+        "comparisonTargets": [],
+        "constraints": [
+          "Līdz 1200 €",
+          "16 GB",
+          "Spēles"
+        ],
+        "summary": "Atlase pēc tava budžeta un zināmajām specifikācijām. Trūkstošos datus norādām atsevišķi."
+      },
+      "recommendations": 0,
+      "error": "CENIQ katalogam nav konfigurēta datubāze."
+    },
+    {
+      "prompt": "55 collu OLED TV ar 120Hz",
+      "status": 503,
+      "plan": {
+        "searchQuery": "TV",
+        "category": "TV",
+        "requiredSpecs": {
+          "size": "55",
+          "refreshRate": "120 Hz",
+          "panelType": "OLED"
+        },
+        "useCases": [],
+        "comparisonTargets": [],
+        "constraints": [
+          "55",
+          "120 Hz",
+          "OLED"
+        ],
+        "summary": "Atlase pēc tava budžeta un zināmajām specifikācijām. Trūkstošos datus norādām atsevišķi."
+      },
+      "recommendations": 0,
+      "error": "CENIQ katalogam nav konfigurēta datubāze."
+    },
+    {
+      "prompt": "salīdzini iPhone 16 un Samsung Galaxy S25",
+      "status": 503,
+      "plan": {
+        "searchQuery": "iPhone 16",
+        "category": "smartphone",
+        "requiredSpecs": {},
+        "useCases": [],
+        "comparisonTargets": [
+          "iPhone 16",
+          "Samsung Galaxy S25"
+        ],
+        "brandPreference": "Samsung",
+        "constraints": [],
+        "summary": "Salīdzinājums pēc CENIQ katalogā pārbaudāmiem datiem."
+      },
+      "recommendations": 0,
+      "error": "CENIQ katalogam nav konfigurēta datubāze."
+    },
+    {
+      "prompt": "portatīvais darbam un video montāžai līdz 1500 €",
+      "status": 503,
+      "plan": {
+        "searchQuery": "laptop",
+        "category": "laptop",
+        "maxPrice": 1500,
+        "requiredSpecs": {},
+        "useCases": [
+          "Video montāža",
+          "Darbs"
+        ],
+        "comparisonTargets": [],
+        "constraints": [
+          "Līdz 1500 €",
+          "Video montāža",
+          "Darbs"
+        ],
+        "summary": "Atlase pēc tava budžeta un zināmajām specifikācijām. Trūkstošos datus norādām atsevišķi."
+      },
+      "recommendations": 0,
+      "error": "CENIQ katalogam nav konfigurēta datubāze."
+    }
+  ]
+}
