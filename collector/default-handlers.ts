@@ -1,6 +1,6 @@
 import { fetchText, resolveStoreSitemapUrls, expandSitemaps, sleep } from "./http.ts";
 import { parseMerchantXmlFeed } from "./feed.ts";
-import { parseProductPage } from "./product-page.ts";
+import { parseMerchantPage } from "./merchant-adapters.ts";
 import { looksLikeProductUrl } from "./sitemap.ts";
 import { catalogProductLinks } from "./catalog-adapter.ts";
 import type { CollectorSourceHandlers } from "./orchestrator.ts";
@@ -82,7 +82,7 @@ async function collectPages(
     examined += 1;
     try {
       const html = await fetchText(url, options.pageTimeoutMs);
-      const offer = parseProductPage(html, url, store);
+      const offer = parseMerchantPage(html, url, store);
       if (offer) offers.push(offer);
       else increment(rejectionReasons, "missing-product-or-one-time-price");
     } catch (error) {

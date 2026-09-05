@@ -200,9 +200,11 @@ export async function discoverProductUrls(
   options: DiscoveryOptions = {},
 ): Promise<DiscoveryResult> {
   const knownOnly = options.knownMerchantsOnly !== false;
+  let tavilyAttempted = false;
 
   if (knownOnly && process.env.TAVILY_API_KEY) {
     try {
+      tavilyAttempted = true;
       return await tavilySearch(query, { ...options, knownMerchantsOnly: true });
     } catch (error) {
       if (!process.env.BRAVE_SEARCH_API_KEY) throw error;
@@ -213,7 +215,7 @@ export async function discoverProductUrls(
     try {
       return await braveSearch(query, options);
     } catch (error) {
-      if (!process.env.TAVILY_API_KEY) throw error;
+      if (!process.env.TAVILY_API_KEY || tavilyAttempted) throw error;
     }
   }
 

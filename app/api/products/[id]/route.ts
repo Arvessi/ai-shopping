@@ -1,3 +1,4 @@
+import { sameProduct } from '@/collector/relevance';
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getCanonicalProduct, searchCanonicalCatalog } from '@/lib/canonical/catalog';
@@ -11,7 +12,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     const canonical = await getCanonicalProduct(id, preferredVariantId);
     if (canonical) {
       const siblings = await searchCanonicalCatalog(canonical.title);
-      const reconciled = reconcileStrongFamilies(siblings.length ? siblings : [canonical]);
+      const reconciled = reconcileStrongFamilies([canonical, ...siblings.filter(p=>p.id!==canonical.id && sameProduct(p.title,canonical.title))]);
       const shaped = shapeCanonicalResults(reconciled, canonical.title, preferredVariantId);
       const product = shaped[0] || canonical;
       const selectedVariantId = product.selectedVariantId!;

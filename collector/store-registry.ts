@@ -26,7 +26,7 @@ const overrides: Record<string, StoreOverride> = {
   },
   tet: {
     catalogUrls: [
-      "https://www.tet.lv/veikals/telefoni/apple.html",
+      "https://www.tet.lv/veikals/telefoni/telefoni-un-aksesuari/viedtalruni.html?page=1",
       "https://www.tet.lv/veikals",
     ],
     productUrlHints: ["/veikals/"],

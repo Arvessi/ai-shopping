@@ -1,3 +1,4 @@
+import { merchantAdapters } from "./merchant-adapters.ts";
 import { XMLParser } from "fast-xml-parser";
 import type { SitemapEntry } from "./types.ts";
 
@@ -58,6 +59,7 @@ function hasSkuLikeSegment(parts: string[]) {
 export function looksLikeProductUrl(url: string, hints: string[] = [], storeSlug?: string): boolean {
   try {
     const parsed = new URL(url);
+    if (storeSlug && merchantAdapters[storeSlug]) return merchantAdapters[storeSlug].isProduct(parsed);
     const path = parsed.pathname.toLowerCase();
     const parts = path.split("/").filter(Boolean);
     if (!path || path === "/") return false;

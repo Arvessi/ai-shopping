@@ -1,45 +1,63 @@
 # CENIQ
 
-Latvian-first price comparison and catalogue-backed product search built with Next.js, TypeScript, PostgreSQL, and Prisma.
+Latvia-first product discovery, price comparison and a catalog-backed shopping assistant. Built with Next.js 16, React 19, TypeScript, PostgreSQL and Prisma.
 
-## Runtime architecture
+## Architecture
 
-Normal user search reads only CENIQ's canonical `ProductFamily` / `ProductVariant` / `MerchantOffer` catalogue. It never calls Tavily or DataForSEO. Catalogue population is a separate scheduled workflow:
+- Normal `/api/search` requests read the internal `ProductFamily` → `ProductVariant` → `MerchantOffer` catalog only. They make no discovery-provider calls.
+- The homepage, merchant comparison stream, product analysis, account pages and light/dark themes share **one stylesheet**, `app/globals.css`.
+- `/api/ai` parses shopping intent and searches the catalog. It ranks actual variants against budget and known attributes, returns exact variant links, and labels unknown requirements. Two named comparison targets are searched separately. It never generates prices, stock, specifications or merchant counts. Camera quality and use-case suitability are explicitly unverified when evidence is missing.
+- Product analysis preserves merchant offers, variant selection, wishlist, price history, price alerts and the optional Gemini verdict endpoint.
+- Scheduled collectors populate the catalog independently of interactive search. Existing canonical identity, safety and outlier validation remain the persistence gate.
 
-1. public merchant feed/API when configured;
-2. public sitemap discovery;
-3. public category/listing adapter;
-4. optional, explicitly invoked discovery fallback.
+## Local setup
 
-The collector normalizes global and merchant-scoped identity, separates real variants, excludes restricted products, rejects recurring prices, and expires stale offers from search.
-
-## Setup
-
-1. `npm install`
-2. Copy `.env.example` to `.env.local`.
-3. Set `DATABASE_URL`, `AUTH_SECRET`, and `CRON_SECRET`.
-4. Run `npx prisma migrate deploy` (or `npm run db:push` for a disposable local database).
-5. Run `npm run dev`.
-
-AI planning works locally without a provider key and searches the same CENIQ catalogue. `GEMINI_API_KEY` is optional for richer natural-language planning. DataForSEO credentials are optional legacy/discovery compatibility only.
-
-## Catalogue sync
-
-Run the daily multi-store job locally with:
+Use Node 24 LTS (the scripts use native TypeScript stripping).
 
 ```sh
-curl "http://localhost:3000/api/cron/catalog-batch?stores=euronics,m79,bite,lmt,tele2,rd&limit=40"
+npm install
+# Copy .env.example to .env.local and supply credentials.
+npm run db:generate
+npm run db:migrate
+npm run dev
 ```
 
-In production, send `Authorization: Bearer $CRON_SECRET`. The response includes store, discovery, parsing, persistence, rejection, duration, merchant, and Tavily metrics. `cursor=N` selects a deterministic incremental slice; otherwise the slice rotates daily.
+`db:migrate` applies committed migrations; `db:push` is for a disposable development database. Do not point development scripts at a database you do not intend to modify.
 
-For a database-free live parser smoke test:
+Required environment variables: `DATABASE_URL` (PostgreSQL), `AUTH_SECRET` (sessions), and `CRON_SECRET` (scheduled operations). Configure `NEXT_PUBLIC_APP_URL` for deployment. The complete environment reference is `.env.example`.
+
+Optional: `TAVILY_API_KEY` for bounded discovery; `BRAVE_SEARCH_API_KEY` for existing discovery fallback; `GEMINI_API_KEY`/`GEMINI_MODEL` for product verdicts. DataForSEO credentials support legacy enrichment jobs. Email and browser-push settings in `.env.example` enable alert delivery.
+
+Without a database, normal search and AI return an explicit 503 configuration error. This is not a populated demo catalog.
+
+## Catalog operations
 
 ```sh
-node --experimental-strip-types scripts/collector-bulk-smoke.ts "euronics,m79,bite,lmt,tele2,rd" 20 0
+npm run catalog:bootstrap
+npm run catalog:coverage
+npm run catalog:coverage:tavily
+npm run catalog:finalize
 ```
 
-## Verification
+Bootstrap and coverage commands write catalog data. `catalog:finalize` executes the three commands above in sequence. `catalog:sync` supports custom store lists and bounded slices. Vercel cron routes are declared in `vercel.json`; production cron calls require `Authorization: Bearer $CRON_SECRET`.
+
+## Merchant adapters
+
+`collector/merchant-adapters.ts` is the registry for Dateks, 1a, AiO, Tet and 220 public product-page recognition and structured parsing. Tet also has a verified public search URL. Other merchants retain existing collectors and public sitemap/category discovery. Catalog listing and sitemap collectors use the registry. Merchant-specific parsers require structured product prices and reject unrelated URL shapes.
+
+A registry entry does **not** mean live acquisition works. The September 5, 2026 probe parsed Tet's Galaxy S25 page; Dateks, 1a, AiO and 220 returned HTTP 403 to the collector. No authentication, CAPTCHA or anti-bot bypass is implemented. Run `npm run collector:merchant-evidence` for the bounded public-page diagnostic. Its raw output is stored only under ignored `.next/merchant-evidence`.
+
+Conventional feed guessing previously found no feeds. The obsolete generic feed-probe command is removed; no acquisition flow guesses feed filenames.
+
+## Product refresh and Tavily
+
+`POST /api/products/:id/refresh` claims an enrichment job and runs merchant acquisition with Next.js `after`. It tries configured merchant search/category pages, known direct offer URLs, then optional discovery when coverage is below three merchants or offers are stale. Successful refreshes have a one-hour cooldown. The client polls, reloads the product, and reports errors.
+
+Tavily uses basic depth, safe search, exact model queries and known merchant domain clusters. Normal search makes **zero** calls. Refresh makes at most **three** Tavily calls; the standalone coverage script also has a global three-call cap. A failed Tavily request is not retried through a provider-fallback loop.
+
+Candidates must be fetched as product pages, parsed, match the model and condition, exclude accessory mismatches, pass a price-sanity gate and then pass existing canonical validation before persistence. Discovery text is never treated as a priced offer. `persistCollectedOffers` performs persistence; live DB persistence must be verified in the configured deployment. Console diagnostics distinguish parsed/accepted offers from before/after merchant counts.
+
+## Validation and CI
 
 ```sh
 npm test
@@ -47,4 +65,8 @@ npm run typecheck
 npm run build
 ```
 
-Automatic Vercel deployments for `rebuild-v2` remain disabled in `vercel.json`.
+The GitHub Actions workflow runs tests, TypeScript and the production build. Vercel deployments are **enabled for `rebuild-v2`**. Keep work on that branch; do not merge it into `main` as part of this milestone. Apply database migrations before using a deployment with a new schema.
+
+For reproducible UI checks without a database, run `npm run dev` plus `npm run test:ui:fixtures`, then open `http://127.0.0.1:3001`. This local-only proxy serves explicitly synthetic API data and forwards the real application assets. It is not used by production routes or collectors, and cannot validate live prices or persistence.
+
+See `docs/validation.md` for the actual checks and remaining deployment limitations for this milestone.

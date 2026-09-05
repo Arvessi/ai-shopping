@@ -17,7 +17,7 @@ if (!process.env.TAVILY_API_KEY) {
   process.exit(1);
 }
 
-const MAX_TAVILY_CALLS = 8;
+const MAX_TAVILY_CALLS = 3;
 const MAX_RESULTS_PER_QUERY = 20;
 const MAX_PAGES_PER_CALL = 12;
 const MAX_PRODUCT_QUERIES = 4;

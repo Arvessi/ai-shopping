@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import './globals.css';
-import './ceniq100.css';
+
 import Header from '@/components/Header';
 import Footer from '@/components/Footer';
 
@@ -12,5 +12,5 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="lv" suppressHydrationWarning><body id="top"><Header/><main>{children}</main><Footer/></body></html>;
+  return <html lang="lv" data-scroll-behavior="smooth" suppressHydrationWarning><body id="top"><Header/><main id="main-content">{children}</main><Footer/></body></html>;
 }

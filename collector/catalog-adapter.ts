@@ -1,3 +1,4 @@
+import { adapterProductLinks, merchantAdapters } from "./merchant-adapters.ts";
 import { looksLikeProductUrl } from "./sitemap.ts";
 import type { CollectorStore } from "./types.ts";
 
@@ -16,6 +17,7 @@ function belongsToStore(url: URL, store: CollectorStore) {
 
 /** Extract public product links from a merchant category/listing page. */
 export function catalogProductLinks(html: string, pageUrl: string, store: CollectorStore) {
+  if (merchantAdapters[store.slug]) return adapterProductLinks(html, pageUrl, store);
   const urls = new Set<string>();
   const baseHref = html.match(/<base\b[^>]*\bhref\s*=\s*["']([^"']+)["']/i)?.[1];
   const linkBase = baseHref ? new URL(decodeAttribute(baseHref), pageUrl).toString() : pageUrl;
