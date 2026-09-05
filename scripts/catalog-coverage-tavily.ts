@@ -35,6 +35,10 @@ const MERCHANT_CLUSTERS = [
   { name:'long-tail-gaps', slugs:['tehnoland','707','dato','upgreat','24lv','need','cenuklubs'] },
 ] as const;
 
+const COLLECTOR_SLUG_ALIASES: Record<string,string> = {
+  '24lv': '24',
+};
+
 function clean(value:string) {
   return value.replace(/\s+/g,' ').replace(/\s*\/\s*$/g,'').trim();
 }
@@ -114,8 +118,6 @@ const familyCoverage=families.map(family=>({
 
 const candidates=new Map<string,string>();
 
-// First: recent exact demand that is missing entirely or still has <=2 merchants.
-// This prevents wasting calls on already healthy queries such as a 4-store iPhone result.
 for(const row of recent) {
   const q=clean(row.query);
   if(!isSpecificProductQuery(q)) continue;
@@ -125,7 +127,6 @@ for(const row of recent) {
   if(!candidates.has(q.toLowerCase())) candidates.set(q.toLowerCase(),q);
 }
 
-// Then fill unused slots with genuinely low-coverage canonical families.
 for(const family of familyCoverage) {
   if(family.merchants>2) continue;
   const q=clean(family.title);
@@ -154,6 +155,7 @@ for(const query of priorityQueries) {
   for(const cluster of MERCHANT_CLUSTERS) {
     if(tavilyCalls>=MAX_TAVILY_CALLS) break;
 
+    const clusterSlugs = new Set<string>(cluster.slugs);
     const merchants=cluster.slugs
       .map(slug=>merchantBySlug.get(slug))
       .filter(Boolean) as NonNullable<ReturnType<typeof merchantBySlug.get>>[];
@@ -173,7 +175,7 @@ for(const query of priorityQueries) {
 
       const seen=new Set<string>();
       const urls=discovered.candidates
-        .filter(candidate=>candidate.merchantSlug&&cluster.slugs.includes(candidate.merchantSlug as any))
+        .filter(candidate=>Boolean(candidate.merchantSlug&&clusterSlugs.has(candidate.merchantSlug)))
         .filter(candidate=>{
           if(seen.has(candidate.url)) return false;
           seen.add(candidate.url);
@@ -184,14 +186,16 @@ for(const query of priorityQueries) {
       const queryOffers:CollectedOffer[]=[];
       const fetchFailures:string[]=[];
       for(const candidate of urls) {
-        const store=collectorBySlug.get(candidate.merchantSlug!);
+        const discoveredSlug=candidate.merchantSlug!;
+        const collectorSlug=COLLECTOR_SLUG_ALIASES[discoveredSlug]||discoveredSlug;
+        const store=collectorBySlug.get(collectorSlug);
         if(!store) continue;
         try {
           const html=await fetchText(candidate.url,9000);
           const parsed=parseProductPage(html,candidate.url,store);
           if(parsed&&looksRelevant(parsed.title,query)) queryOffers.push(parsed);
         } catch(error) {
-          fetchFailures.push(candidate.merchantSlug!);
+          fetchFailures.push(discoveredSlug);
         }
         await sleep(120);
       }
